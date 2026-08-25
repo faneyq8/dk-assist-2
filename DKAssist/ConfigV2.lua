@@ -16,6 +16,19 @@ local PAGE_ITEMS = {
     { text = "Runic Power", value = "runic" },
     { text = "Death and Decay", value = "dnd" },
     { text = "Soul Reaper", value = "soulreaper" },
+    { text = "Death and Decay (Blood)", value = "blooddnd" },
+    { text = "Stand In Death and Decay (Blood)", value = "blooddndmissing" },
+}
+
+local BLOOD_ONLY_KEYS = { blooddnd = true, blooddndmissing = true }
+
+local UNHOLY_PAGE_ITEMS = {}
+for _, item in ipairs(PAGE_ITEMS) do
+    if not BLOOD_ONLY_KEYS[item.value] then UNHOLY_PAGE_ITEMS[#UNHOLY_PAGE_ITEMS + 1] = item end
+end
+local BLOOD_PAGE_ITEMS = {
+    { text = "Death and Decay", value = "blooddnd" },
+    { text = "Stand In Death and Decay", value = "blooddndmissing" },
 }
 
 local PAGE_LABEL = {}
@@ -484,7 +497,7 @@ function addon:CreateConfigPanel(standalone)
 
     local title = CreateText(panel, "|cffcc0000DK Assist|r", 16, -14, "GameFontNormalLarge")
     local subtitle = CreateText(panel,
-        "DK alerts - Scythe, Sudden Doom, Putrefy, Runic Power & Death and Decay",
+        "Death Knight alerts - Unholy combat tools and Blood Death and Decay reminder",
         16, -36, "GameFontHighlightSmall", nil, { 0.67, 0.67, 0.67 })
     panel.dkassistTitle = title
     panel.dkassistSubtitle = subtitle
@@ -493,6 +506,20 @@ function addon:CreateConfigPanel(standalone)
     local pages = {}
     local activePage
     local testActive = false
+
+    local function ActiveConfigSpec()
+        local view = DKAssistDB.configSpecView or "auto"
+        if view == "blood" or view == "unholy" then return view end
+        return addon:IsBloodSpec() and "blood" or "unholy"
+    end
+
+    local function ConfigPageItems()
+        return ActiveConfigSpec() == "blood" and BLOOD_PAGE_ITEMS or UNHOLY_PAGE_ITEMS
+    end
+
+    -- Auto follows the character's live specialization when the panel is
+    -- first created instead of retaining the Unholy default page.
+    if ActiveConfigSpec() == "blood" then selectedKey = "blooddnd" end
 
     if not StaticPopupDialogs.DKASSIST_V2_RELOAD_MINIMAP then
         StaticPopupDialogs.DKASSIST_V2_RELOAD_MINIMAP = {
@@ -536,6 +563,29 @@ function addon:CreateConfigPanel(standalone)
         panel.dkassistThemeLabel = themeLabel
         panel.dkassistThemeDropdown = themeDropdown
     end
+
+
+    local specLabel = CreateText(panel, "Spec:", 0, -16, "GameFontHighlightSmall")
+    specLabel:ClearAllPoints()
+    specLabel:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -355, -18)
+    local specDropdown = CreateDropdown(panel, 0, 0, 118,
+        function()
+            local active = addon:IsBloodSpec() and "Blood" or "Unholy"
+            return {
+                { text = "Auto (" .. active .. ")", value = "auto" },
+                { text = "Unholy", value = "unholy" },
+                { text = "Blood", value = "blood" },
+            }
+        end,
+        function() return DKAssistDB.configSpecView or "auto" end,
+        function(value)
+            DKAssistDB.configSpecView = value
+            panel:ShowPage(ActiveConfigSpec() == "blood" and "blooddnd" or "festering")
+        end)
+    specDropdown:ClearAllPoints()
+    specDropdown:SetPoint("LEFT", specLabel, "RIGHT", -6, 0)
+    panel.dkassistSpecLabel = specLabel
+    panel.dkassistSpecDropdown = specDropdown
 
     local pageHolder = CreateFrame("Frame", nil, panel)
     pageHolder:SetPoint("TOPLEFT", panel, "TOPLEFT", 10, -58)
@@ -593,7 +643,9 @@ function addon:CreateConfigPanel(standalone)
         if selectedKey == "suddendoom" and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
         if selectedKey == "putrefy" and addon.RefreshPutrefyWarnings then addon:RefreshPutrefyWarnings() end
         if selectedKey == "runic" and addon.UpdateRunicPowerGlow then addon:UpdateRunicPowerGlow() end
-        if selectedKey == "dnd" and addon.RefreshDnDBuffGlows then addon:RefreshDnDBuffGlows() end
+        if selectedKey == "blooddnd" and addon.RefreshBloodDnDReminder then addon:RefreshBloodDnDReminder() end
+        if selectedKey == "blooddndmissing" and addon.RefreshDnDMissingGlows then addon:RefreshDnDMissingGlows() end
+        if selectedKey == "bloodbone" and addon.RefreshBloodBoneReminder then addon:RefreshBloodBoneReminder() end
     end
 
     local function RefreshPreview(page)
@@ -622,6 +674,9 @@ function addon:CreateConfigPanel(standalone)
         elseif selectedKey == "epidemic" then settings = DKAssistDB.spells.epidemic
         elseif selectedKey == "suddendoom" then settings = DKAssistDB.suddenDoomGlow
         elseif selectedKey == "runic" then settings = DKAssistDB.runicPower end
+        if selectedKey == "blooddnd" then settings = DKAssistDB.bloodDnd end
+        if selectedKey == "blooddndmissing" then settings = DKAssistDB.bloodDndMissing end
+        if selectedKey == "bloodbone" then settings = DKAssistDB.bloodBone end
         if not settings or not settings.enabled then return end
         local target = page.previewIcon
         if selectedKey == "runic" then
@@ -663,7 +718,7 @@ function addon:CreateConfigPanel(standalone)
     local function AddSelector(page, card, fieldName)
         local selectorLabel = CreateText(card, "Configure:", 14, -38, "GameFontNormal")
         local selector = CreateDropdown(card, 0, 0, 148,
-            function() return PAGE_ITEMS end,
+            function() return ConfigPageItems() end,
             function() return selectedKey end,
             function(value) panel:ShowPage(value) end)
         selector:ClearAllPoints()
@@ -676,14 +731,18 @@ function addon:CreateConfigPanel(standalone)
         if key == "deathcoil" then return DKAssistDB.spells.deathCoil end
         if key == "epidemic" then return DKAssistDB.spells.epidemic end
         if key == "suddendoom" then return DKAssistDB.suddenDoomGlow end
-        if key == "dnd" then return DKAssistDB.dnd end
+        if key == "blooddnd" then return DKAssistDB.bloodDnd end
+        if key == "blooddndmissing" then return DKAssistDB.bloodDndMissing end
+        if key == "bloodbone" then return DKAssistDB.bloodBone end
         return DKAssistDB.runicPower
     end
 
     local function BuildAppearance(page, card, key)
         page.appearanceControls = {}
-        local appearanceWidth = (key == "festering" or key == "runic") and 190
-            or (key == "suddendoom" and 250 or 330)
+        -- Leave enough room for the numeric edit box on the right.  The same
+        -- page is used both standalone and inside Blizzard's narrower AddOns
+        -- settings panel, so wide sliders can otherwise escape the card.
+        local appearanceWidth = (key == "festering" or key == "runic") and 190 or 250
         local function settings() return GlowSettingsFor(key) end
         local function changed()
             RefreshTracking(); RefreshPreview(page)
@@ -721,13 +780,15 @@ function addon:CreateConfigPanel(standalone)
     local function BuildGlowPage(key, titleText, spellID)
         local page = CreateFrame("Frame", nil, pageHolder)
         page:SetAllPoints()
-        page.layoutKind = key == "festering" and "festering" or "glow"
+        page.layoutKind = key == "festering" and "festering" or (key == "blooddnd" and "blooddnd" or "glow")
         page.settingsCard = CreateCard(page, titleText)
         page.previewCard = CreateCard(page, "Live Preview")
         page.appearanceCard = CreateCard(page, "Pixel Glow appearance")
         if key == "festering" or key == "deathcoil" or key == "epidemic" then
             page.warningCard = CreateCard(page, "Warning timing")
             page.ghoulCard = CreateCard(page, "Lesser Ghoul reminder")
+        elseif key == "blooddnd" then
+            page.warningCard = CreateCard(page, "Death and Decay Timer")
         end
         -- The three proc pages can show either the existing button glow
         -- configuration or a separate movable text alert.  They are separate
@@ -874,10 +935,25 @@ function addon:CreateConfigPanel(standalone)
             if key == "festering" and addon.RefreshFesteringGlowStyle then addon:RefreshFesteringGlowStyle() end
             RefreshTracking(); RefreshPreview(page)
         end
+        local ENABLE_LABELS = {
+            runic           = "Enable Runic Power glow",
+            festering       = "Enable glow",
+            blooddnd        = "Glow when Death and Decay is ready",
+            bloodbone       = "Glow when Bone Shield is missing",
+            blooddndmissing = "Glow when you are outside your Death and Decay",
+        }
         page.enable = CreateCheck(page.settingsCard,
-            key == "runic" and "Enable Runic Power glow" or (key == "festering" and "Enable glow" or "Enable Sudden Doom glow"),
+            ENABLE_LABELS[key] or "Enable Sudden Doom glow",
             14, -76, function() return settings().enabled end,
-            function(value) settings().enabled = value; changed() end)
+            function(value)
+                settings().enabled = value
+                if (key == "blooddnd" or key == "bloodbone" or key == "blooddndmissing")
+                    and addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+                -- This reminder also decorates action-bar copies, which are
+                -- only built while it is enabled.
+                if key == "blooddndmissing" and addon.ScanAllButtons then addon:ScanAllButtons() end
+                changed()
+            end)
         -- Sudden Doom is enabled once from its dedicated page.  The Death
         -- Coil and Epidemic pages remain only for their individual styling.
         if key == "deathcoil" or key == "epidemic" then page.enable:Hide() end
@@ -907,6 +983,13 @@ function addon:CreateConfigPanel(standalone)
 
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, spellID, key == "runic")
         BuildAppearance(page, page.appearanceCard, key)
+        if key == "blooddndmissing" then
+            page.missingHint = CreateText(page.appearanceCard,
+                "Blood only, in combat.  Requires Death and Decay and its buff in the Cooldown "
+                .. "Manager: the buff icon is how the reminder knows you left your patch.  Waits "
+                .. "half a second so the Cleaving Strikes window does not flicker.",
+                14, -250, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+        end
 
         if key == "festering" then
             page.combat = CreateCheck(page.warningCard, "Glow at combat start", 14, -38,
@@ -927,6 +1010,33 @@ function addon:CreateConfigPanel(standalone)
             page.ghoulHint = CreateText(page.ghoulCard,
                 "Requires Lesser Ghoul in the Cooldown Manager, under either Tracked Buffs or Tracked Bars.",
                 18, -49, "GameFontHighlightSmall", 310, { 0.64, 0.64, 0.64 })
+        elseif key == "blooddnd" then
+            page.dndTimerEnable = CreateCheck(page.warningCard, "Enable timer", 14, -38,
+                function() return DKAssistDB.dnd.enabled end,
+                function(value) DKAssistDB.dnd.enabled = value; addon:RefreshDnDTracker() end)
+            page.dndTimerSize = CreateSlider(page.warningCard, "Timer Scale", 14, -72, 175, 24, 96, 1,
+                function() return DKAssistDB.dnd.size end,
+                function(value) DKAssistDB.dnd.size = value; addon:RefreshDnDTracker() end)
+            page.dndTimerAlways = CreateCheck(page.warningCard, "Always show", 14, -126,
+                function() return DKAssistDB.dnd.alwaysShow end,
+                function(value) DKAssistDB.dnd.alwaysShow = value; addon:RefreshDnDAlwaysShow() end)
+            page.dndTimerLock = CreateCheck(page.warningCard, "Lock position", 155, -126,
+                function() return DKAssistDB.dnd.locked end,
+                function(value) DKAssistDB.dnd.locked = value; addon:RefreshDnDTracker() end)
+            page.dndTimerColor = CreateColorControl(page.warningCard, 14, -158, "Timer Color:",
+                function() return DKAssistDB.dnd.color end,
+                function() addon:RefreshDnDTracker() end)
+            page.dndGraceColor = CreateColorControl(page.warningCard, 14, -194, "Grace Color:",
+                function() return DKAssistDB.dnd.graceColor end,
+                function() addon:RefreshDnDTracker() end)
+            page.dndTimerTest = CreateFrame("Button", nil, page.warningCard, "UIPanelButtonTemplate")
+            page.dndTimerTest:SetSize(105, 24)
+            page.dndTimerTest:SetPoint("TOPLEFT", page.warningCard, "TOPLEFT", 14, -230)
+            page.dndTimerTest:SetText("Test Timer")
+            page.dndTimerTest:SetScript("OnClick", function() addon:TestDnDTracker() end)
+            page.dndTimerHint = CreateText(page.warningCard,
+                "Shows the remaining Death and Decay time after you cast it.",
+                18, -265, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
         elseif key == "runic" then
             page.threshold = CreateSlider(page.settingsCard, "Glow at Runic Power", 14, -198, 175, 50, 100, 1,
                 function() return settings().threshold end,
@@ -940,6 +1050,11 @@ function addon:CreateConfigPanel(standalone)
             page.glowDropdown.refresh(); page.colorSwatch.refresh()
             page.refreshAppearance()
             if page.timing then page.timing.refresh(); page.combat.refresh(); page.grace.refresh(); page.ghoul.refresh() end
+            if page.dndTimerEnable then
+                page.dndTimerEnable.refresh(); page.dndTimerSize.refresh()
+                page.dndTimerAlways.refresh(); page.dndTimerLock.refresh()
+                page.dndTimerColor.refresh(); page.dndGraceColor.refresh()
+            end
             if page.threshold then page.threshold.refresh() end
             if page.hasTextAlerts then
                 page.textSelector.refresh(); page.textEnable.refresh(); page.textExpired.refresh(); page.textGhoulMissing.refresh(); page.textValue.refresh(); page.textColor.refresh(); page.textTiming.refresh(); page.textLock.refresh(); page.textSize.refresh(); page.textFont.refresh(); page.textOutline.refresh()
@@ -1101,22 +1216,22 @@ function addon:CreateConfigPanel(standalone)
         page.crossH:SetPoint("LEFT"); page.crossH:SetPoint("RIGHT")
         page.crossV = page.previewIcon:CreateTexture(nil, "OVERLAY")
         page.crossV:SetPoint("TOP"); page.crossV:SetPoint("BOTTOM")
-        page.crossThickness = CreateSlider(page.appearanceCard, "Cross Thickness", 14, -38, 330, 0.05, 0.5, 0.01,
+        page.crossThickness = CreateSlider(page.appearanceCard, "Cross Thickness", 14, -38, 250, 0.05, 0.5, 0.01,
             function() return DKAssistDB.putrefy.crossThickness end,
             function(v) DKAssistDB.putrefy.crossThickness = v; changed() end)
-        page.crossAlpha = CreateSlider(page.appearanceCard, "Cross Opacity", 14, -88, 330, 0.1, 1, 0.05,
+        page.crossAlpha = CreateSlider(page.appearanceCard, "Cross Opacity", 14, -88, 250, 0.1, 1, 0.05,
             function() return DKAssistDB.putrefy.crossAlpha end,
             function(v) DKAssistDB.putrefy.crossAlpha = v; changed() end)
-        page.glowSpeed = CreateSlider(page.appearanceCard, "Animation Speed", 14, -38, 330, 0.05, 2, 0.05,
+        page.glowSpeed = CreateSlider(page.appearanceCard, "Animation Speed", 14, -38, 250, 0.05, 2, 0.05,
             function() return DKAssistDB.putrefy.glowSpeed end,
             function(v) DKAssistDB.putrefy.glowSpeed = v; changed() end)
-        page.glowLines = CreateSlider(page.appearanceCard, "Lines / Particles", 14, -88, 330, 1, 16, 1,
+        page.glowLines = CreateSlider(page.appearanceCard, "Lines / Particles", 14, -88, 250, 1, 16, 1,
             function() return DKAssistDB.putrefy.glowLines end,
             function(v) DKAssistDB.putrefy.glowLines = v; changed() end)
-        page.glowThickness = CreateSlider(page.appearanceCard, "Thickness", 14, -138, 330, 1, 8, 1,
+        page.glowThickness = CreateSlider(page.appearanceCard, "Thickness", 14, -138, 250, 1, 8, 1,
             function() return DKAssistDB.putrefy.glowThickness end,
             function(v) DKAssistDB.putrefy.glowThickness = v; changed() end)
-        page.glowAlpha = CreateSlider(page.appearanceCard, "Opacity", 14, -188, 330, 0.1, 1, 0.05,
+        page.glowAlpha = CreateSlider(page.appearanceCard, "Opacity", 14, -188, 250, 0.1, 1, 0.05,
             function() return DKAssistDB.putrefy.glowAlpha end,
             function(v) DKAssistDB.putrefy.glowAlpha = v; changed() end)
         page.refreshAppearance = function()
@@ -1140,12 +1255,11 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "dnd"
         page.settingsCard = CreateCard(page, "Death and Decay Tracker")
         page.previewCard = CreateCard(page, "Live Preview")
-        page.buffCard = CreateCard(page, "Death and Decay buff reminder")
         AddSelector(page, page.settingsCard)
         page.enable = CreateCheck(page.settingsCard, "Enable tracker", 14, -76,
             function() return DKAssistDB.dnd.enabled end,
             function(v) DKAssistDB.dnd.enabled = v; addon:RefreshDnDTracker() end)
-        page.size = CreateSlider(page.settingsCard, "Icon Size", 14, -111, 190, 24, 96, 1,
+        page.size = CreateSlider(page.settingsCard, "Timer Scale", 14, -111, 190, 24, 96, 1,
             function() return DKAssistDB.dnd.size end,
             function(v) DKAssistDB.dnd.size = v; addon:RefreshDnDTracker() end)
         page.always = CreateCheck(page.settingsCard, "Always show", 14, -165,
@@ -1154,43 +1268,19 @@ function addon:CreateConfigPanel(standalone)
         page.lock = CreateCheck(page.settingsCard, "Lock position", 14, -195,
             function() return DKAssistDB.dnd.locked end,
             function(v) DKAssistDB.dnd.locked = v; addon:RefreshDnDTracker() end)
+        page.timerColor = CreateColorControl(page.settingsCard, 14, -235, "Timer Color:",
+            function() return DKAssistDB.dnd.color end,
+            function() addon:RefreshDnDTracker() end)
+        page.graceColor = CreateColorControl(page.settingsCard, 14, -271, "Grace Color:",
+            function() return DKAssistDB.dnd.graceColor end,
+            function() addon:RefreshDnDTracker() end)
         page.hint = CreateText(page.settingsCard,
             "Use Test below to show the tracker, then drag it to your preferred position. Lock it when done.",
-            18, -230, "GameFontHighlightSmall", 315, { 0.64, 0.64, 0.64 })
+            18, -310, "GameFontHighlightSmall", 315, { 0.64, 0.64, 0.64 })
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, addon.SPELLS.DEATH_AND_DECAY.id, false)
-
-        -- Blood only.  Glows Death and Decay whenever the 188290 buff is
-        -- missing in combat, so you know to step back into your own patch.
-        local function settings() return GlowSettingsFor("dnd") end
-        local function changed() RefreshTracking() end
-        page.buffEnable = CreateCheck(page.buffCard, "Glow when the buff is missing", 14, -38,
-            function() return settings().buffGlow end,
-            function(v) settings().buffGlow = v; changed() end)
-        page.buffHint = CreateText(page.buffCard,
-            "Blood only. Requires Death and Decay in the Cooldown Manager, under either Tracked Buffs or Tracked Bars.",
-            18, -66, "GameFontHighlightSmall", 315, { 0.64, 0.64, 0.64 })
-        local buffStyleLabel = CreateText(page.buffCard, "Glow Style:", 14, -130, "GameFontNormal")
-        page.buffDropdown = CreateDropdown(page.buffCard, 0, 0, 145,
-            function()
-                local items = {}
-                for _, glowType in ipairs(addon.GLOW_TYPES) do
-                    items[#items + 1] = { text = glowType.name, value = glowType.id }
-                end
-                return items
-            end,
-            function() return settings().glowType end,
-            function(value) settings().glowType = value; changed() end)
-        page.buffDropdown:ClearAllPoints()
-        page.buffDropdown:SetPoint("LEFT", buffStyleLabel, "RIGHT", -8, -2)
-        page.buffColor = CreateColorControl(page.buffCard, 14, -168, "Glow Color:",
-            function() return settings().color end, changed)
-        CreatePresetRow(page.buffCard, 14, -200, settings, function()
-            page.buffColor.refresh(); changed()
-        end)
-
         page.refresh = function()
             page.selector.refresh(); page.enable.refresh(); page.size.refresh(); page.always.refresh(); page.lock.refresh()
-            page.buffEnable.refresh(); page.buffDropdown.refresh(); page.buffColor.refresh()
+            page.timerColor.refresh(); page.graceColor.refresh()
         end
         pages.dnd = page
     end
@@ -1228,6 +1318,8 @@ function addon:CreateConfigPanel(standalone)
     BuildSuddenDoomPage()
     BuildPutrefyPage()
     BuildGlowPage("runic", "Runic Power Glow", nil)
+    BuildGlowPage("blooddnd", "Blood - Death and Decay Reminder", addon.SPELLS.DEATH_AND_DECAY.id)
+    BuildGlowPage("blooddndmissing", "Blood - Stand In Death and Decay", addon.SPELLS.DEATH_AND_DECAY.id)
     BuildDnDPage()
     BuildSoulReaperPage()
 
@@ -1248,8 +1340,7 @@ function addon:CreateConfigPanel(standalone)
 
         for key, page in pairs(pages) do
             for _, card in pairs({ page.settingsCard, page.previewCard, page.warningCard, page.ghoulCard, page.appearanceCard,
-                page.textSettingsCard, page.textPreviewCard, page.textAppearanceCard, page.glowCard, page.textCard,
-                page.buffCard }) do
+                page.textSettingsCard, page.textPreviewCard, page.textAppearanceCard, page.glowCard, page.textCard }) do
                 if card then card:ClearAllPoints() end
             end
             if page.hasTextAlerts then
@@ -1300,6 +1391,16 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.ghoulHint:SetWidth(math.max(230, leftWidth - 36))
+            elseif page.layoutKind == "blooddnd" then
+                page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                page.settingsCard:SetSize(leftWidth, topHeight)
+                page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+                page.previewCard:SetSize(rightWidth, topHeight)
+                page.warningCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
+                page.warningCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
+                page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                page.dndTimerHint:SetWidth(math.max(230, leftWidth - 36))
             elseif page.layoutKind == "glow" or page.layoutKind == "putrefy" then
                 if key == "runic" then
                     page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
@@ -1321,10 +1422,7 @@ function addon:CreateConfigPanel(standalone)
                 page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
                 page.previewCard:SetSize(rightWidth, topHeight)
-                page.buffCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
-                page.buffCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.hint:SetWidth(math.max(210, leftWidth - 36))
-                page.buffHint:SetWidth(math.max(230, rightWidth - 36))
             elseif page.layoutKind == "soul" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
@@ -1346,7 +1444,7 @@ function addon:CreateConfigPanel(standalone)
         testActive = false; testButton:SetText("Test")
         cdmCheck:SetShown(pageKey == "festering" or pageKey == "putrefy" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
         cdmCheck.Text:SetText(key == "putrefy" and "Track on Cooldown Manager" or "Use Cooldown Manager (instead of action bars)")
-        rescanButton:SetShown(key ~= "soulreaper")
+        rescanButton:SetShown(key ~= "dnd" and key ~= "soulreaper")
         testButton:SetShown(key ~= "soulreaper")
         cdmCheck.refresh()
         activePage.refresh()
@@ -1360,6 +1458,13 @@ function addon:CreateConfigPanel(standalone)
     function panel:RefreshControls()
         minimapCheck.refresh()
         if themeDropdown then themeDropdown.refresh() end
+        specDropdown.refresh()
+        local activeSpec = ActiveConfigSpec()
+        if activeSpec == "blood" and not BLOOD_ONLY_KEYS[selectedKey] then
+            selectedKey = "blooddnd"
+        elseif activeSpec == "unholy" and BLOOD_ONLY_KEYS[selectedKey] then
+            selectedKey = "festering"
+        end
         LayoutPages()
         self:ShowPage(selectedKey)
     end
@@ -1720,13 +1825,13 @@ function addon:CreateConfigPanel(standalone)
                 addon:TestSuddenDoomGlow("epidemic")
             elseif selectedKey == "putrefy" then addon:TestPutrefyWarning()
             elseif selectedKey == "runic" then addon:TestRunicPowerGlow()
-            elseif selectedKey == "dnd" then
-                addon:TestDnDTracker()
-                addon:TestDnDBuffGlow()
-            end
+            elseif selectedKey == "blooddnd" then addon:TestBloodDnDReminder()
+            elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
+            elseif selectedKey == "bloodbone" then addon:TestBloodBoneReminder()
+            elseif selectedKey == "dnd" then addon:TestDnDTracker() end
             testButton:SetText("Stop Test")
         else
-            addon:StopAll(); addon:StopDnDTest(); addon:StopRunicPowerGlow()
+            addon:StopAll(); addon:StopDnDTest(); addon:StopRunicPowerGlow(); addon:StopBloodDnDReminder(); addon:StopBloodBoneReminder(); addon:StopDnDMissingGlow()
             testButton:SetText("Test")
         end
     end)

@@ -1,6 +1,6 @@
 ## Interface: 120100
 ## Title: DK Assist
-## Notes: Festering Scythe glow tracker and Putrefy warning for Death Knights
+## Notes: Death Knight combat alerts for Unholy, plus a Blood Death and Decay reminder
 ## Author: Zacho
 ## Version: 1.6.6
 ## IconTexture: Interface\AddOns\DKAssist\Media\Icon.png

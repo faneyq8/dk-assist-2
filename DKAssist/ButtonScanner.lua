@@ -153,7 +153,7 @@ function addon:ScanAllButtons()
     if addon.CreateFesteringOverlays then addon:CreateFesteringOverlays() end
     if addon.CreatePutrefyOverlays   then addon:CreatePutrefyOverlays()   end
     if addon.CreateSuddenDoomOverlays then addon:CreateSuddenDoomOverlays() end
-    if addon.CreateDnDBuffOverlays   then addon:CreateDnDBuffOverlays()   end
+    if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
     if addon.RefreshPutrefyWarnings then addon:RefreshPutrefyWarnings() end

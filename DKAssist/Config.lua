@@ -54,7 +54,7 @@ function addon:CreateConfigPanel(standalone)
 
     local subtitle = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
-    subtitle:SetText("Death Knight — Festering Scythe, Putrefy, Death and Decay & Soul Reaper")
+    subtitle:SetText("Unholy Death Knight — Festering Scythe, Putrefy, Death and Decay & Soul Reaper")
     subtitle:SetTextColor(0.65, 0.65, 0.65)
 
     -- -------------------------------------------------------

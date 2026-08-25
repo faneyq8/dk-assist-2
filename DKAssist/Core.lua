@@ -28,7 +28,29 @@ addon.SPELLS = {
         id   = 43265,
         name = "Death and Decay",
         icon = 136144,
+        -- ButtonScanner collects action-bar copies of Death and Decay under
+        -- this key for the "stand in your patch" reminder below.
         key  = "deathAndDecay",
+    },
+    DEATH_AND_DECAY_BUFF = {
+        id   = 188290,
+        name = "Death and Decay Buff",
+        key  = nil,
+    },
+    BONE_SHIELD = {
+        id   = 195181,
+        name = "Bone Shield",
+        key  = nil,
+    },
+    MARROWREND = {
+        id   = 195182,
+        name = "Marrowrend",
+        key  = nil,
+    },
+    DEATHS_CARESS = {
+        id   = 195292,
+        name = "Death's Caress",
+        key  = nil,
     },
     SOUL_REAPER = {
         id   = 343294,
@@ -174,6 +196,7 @@ addon.DEFAULT_DB = {
     trackCDMFestering = false,
     trackCDMPutrefy   = false,
     trackCDMSuddenDoom = false,
+    configSpecView    = "auto",
     runicPowerWarning = true,
     runicPower = {
         enabled = true,
@@ -200,19 +223,48 @@ addon.DEFAULT_DB = {
         size       = 48,
         locked     = false,
         alwaysShow = false,
+        color      = {r = 1.00, g = 0.10, b = 0.10},
+        graceColor = {r = 1.00, g = 0.45, b = 0.08},
         position   = nil,  -- {point, relPoint, x, y}
-        -- Blood-only reminder while the Death and Decay buff (188290) is
-        -- missing.  Opt-in, exactly like the Lesser Ghoul reminder.
-        buffGlow   = false,
-        glowType   = "pixel",
-        color      = {r = 1.0, g = 0.2, b = 0.2},
-        alpha      = 1.0,
-        speed      = 0.25,
-        lines      = 8,
-        thickness  = 2,
-        particles  = 4,
-        scale      = 1.0,
-        border     = false,
+    },
+    bloodDnd = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 0.85, g = 0.10, b = 0.10},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
+    },
+    -- Companion to bloodDnd: glow while you are standing outside your own
+    -- Death and Decay.  Separate settings so both reminders can run with
+    -- their own style, or either one alone.
+    bloodDndMissing = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 1.00, g = 0.20, b = 0.20},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
+    },
+    bloodBone = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 0.85, g = 0.10, b = 0.10},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
     },
     soulReaper = {
         suppressMode = "off",  -- "off", "cooldown", "always"
@@ -452,8 +504,31 @@ local cdmFesteringOverlays = {}
 local cdmPutrefyOverlays   = {}
 local suddenDoomOverlays   = {}
 local cdmSuddenDoomOverlays = {}
+local cdmBloodDnDOverlays = {}
+local cdmBloodBoneOverlays = {}
+local bloodDnDBuffFrame = nil
+local bloodDnDTestActive = false
+local bloodDnDReady = true
+local bloodDnDReadyTimer = nil
+local BLOOD_DND_COOLDOWN = 15
+local CRIMSON_SCOURGE_AURA_ID = 81141
 local suddenDoomActive = false
 local putrefyWarningActive = false
+
+function addon:GetActiveSpecID()
+    if not (GetSpecialization and GetSpecializationInfo) then return nil end
+    local index = GetSpecialization()
+    if not index then return nil end
+    return GetSpecializationInfo(index)
+end
+
+function addon:IsBloodSpec()
+    return self:GetActiveSpecID() == 250
+end
+
+function addon:IsUnholySpec()
+    return self:GetActiveSpecID() == 252
+end
 
 local function GetSuddenDoomOverlaySettings(overlay)
     if DKAssistDB.trackCDMSuddenDoom then return DKAssistDB.suddenDoomGlow end
@@ -617,18 +692,15 @@ local function UpdateCrossAppearance(overlay)
     overlay._crossV:SetPoint("TOP",    overlay, "TOP",    0, 0)
     overlay._crossV:SetPoint("BOTTOM", overlay, "BOTTOM", 0, 0)
 
-    local w, ht = overlay:GetSize()
-    if w and w > 1 then
-        overlay._crossH:SetHeight(math.max(2, ht * thickness))
-        overlay._crossV:SetWidth(math.max(2, w * thickness))
-    end
-
-    overlay:SetScript("OnSizeChanged", function(self, nw, nh)
-        if self._crossH then
-            self._crossH:SetHeight(math.max(2, nh * thickness))
-            self._crossV:SetWidth(math.max(2, nw * thickness))
-        end
-    end)
+    -- Cooldown Manager dimensions can be secret values in 12.1.  Performing
+    -- arithmetic on GetSize()/OnSizeChanged arguments taints execution and
+    -- throws an error in combat.  Convert the user-facing percentage slider
+    -- to a safe fixed pixel width instead; the textures remain anchored to
+    -- all four sides, so the cross still scales to every button.
+    local crossPixels = math.max(2, math.floor(2 + (thickness * 28)))
+    overlay._crossH:SetHeight(crossPixels)
+    overlay._crossV:SetWidth(crossPixels)
+    overlay:SetScript("OnSizeChanged", nil)
 end
 
 function addon:CreateFesteringOverlays()
@@ -686,6 +758,165 @@ function addon:RegisterCDMSuddenDoomFrame(frame, spellKey)
     if suddenDoomActive then addon:ShowSuddenDoomGlows() end
 end
 
+local function StopBloodDnDOverlay(overlay)
+    if overlay._glowActive then
+        local settings = DKAssistDB and DKAssistDB.bloodDnd
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+        overlay._glowActive = false
+    end
+    overlay:Hide()
+end
+
+function addon:StopBloodDnDReminder()
+    bloodDnDTestActive = false
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        StopBloodDnDOverlay(overlay)
+    end
+end
+
+function addon:RegisterCDMBloodDnDAbilityFrame(frame)
+    if not (DKAssistDB and DKAssistDB.bloodDnd and DKAssistDB.bloodDnd.enabled) then return end
+    if cdmBloodDnDOverlays[frame] then return end
+    cdmBloodDnDOverlays[frame] = CreateOverlay(frame, "bloodDnd")
+end
+
+function addon:RegisterCDMBloodDnDBuffFrame(frame)
+    bloodDnDBuffFrame = frame
+    -- While the aura is down this row reports the ability spell ID, so an
+    -- earlier scan may have registered it as a glow target.  The detection
+    -- source must never be decorated: it is hidden exactly when the
+    -- buff-missing reminder needs to be visible.
+    local overlay = cdmBloodDnDOverlays[frame]
+    if overlay then
+        StopBloodDnDOverlay(overlay)
+        overlay:SetParent(nil)
+        cdmBloodDnDOverlays[frame] = nil
+    end
+    if addon.ClearCDMDnDMissingFrame then addon:ClearCDMDnDMissingFrame(frame) end
+end
+
+function addon:RefreshBloodDnDReminder()
+    local settings = DKAssistDB and DKAssistDB.bloodDnd
+    local crimsonScourgeActive = false
+    -- Crimson Scourge immediately resets Death and Decay. Only test whether
+    -- Blizzard returned the aura; its other fields may be secret in 12.1.
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, CRIMSON_SCOURGE_AURA_ID)
+        crimsonScourgeActive = ok and aura ~= nil
+    end
+    if crimsonScourgeActive then bloodDnDReady = true end
+    local active = bloodDnDTestActive or (settings and settings.enabled and addon:IsBloodSpec()
+        and InCombatLockdown() and bloodDnDReady)
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        local target = overlay._targetFrame
+        if active and target and target:IsVisible() then
+            overlay:Show()
+            if not overlay._glowActive then
+                local glowType = addon:GetGlowTypeByID(settings.glowType)
+                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+                    overlay._glowActive = true
+                end
+            end
+        else
+            StopBloodDnDOverlay(overlay)
+        end
+    end
+end
+
+function addon:TestBloodDnDReminder()
+    local settings = DKAssistDB and DKAssistDB.bloodDnd
+    bloodDnDTestActive = true
+    local shown = 0
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
+            overlay:Show()
+            local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+            if glowType and glowType.start then pcall(glowType.start, overlay, settings) end
+            overlay._glowActive = true
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then
+        bloodDnDTestActive = false
+        print("|cffcc0000DK Assist:|r Add Death and Decay and its buff to the Cooldown Manager, then use Rescan Bars.")
+    end
+    return shown
+end
+
+local function StopBloodBoneOverlay(overlay)
+    if overlay._glowActive then
+        local settings = DKAssistDB and DKAssistDB.bloodBone
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+        overlay._glowActive = false
+    end
+    overlay:Hide()
+end
+
+function addon:RegisterCDMBloodBoneAbilityFrame(frame)
+    if not (DKAssistDB and DKAssistDB.bloodBone and DKAssistDB.bloodBone.enabled) then return end
+    if cdmBloodBoneOverlays[frame] then return end
+    cdmBloodBoneOverlays[frame] = CreateOverlay(frame, "bloodBone")
+end
+
+function addon:StopBloodBoneReminder()
+    for _, overlay in pairs(cdmBloodBoneOverlays) do StopBloodBoneOverlay(overlay) end
+end
+
+function addon:RefreshBloodBoneReminder(testing)
+    local settings = DKAssistDB and DKAssistDB.bloodBone
+    local boneShieldActive = false
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, addon.SPELLS.BONE_SHIELD.id)
+        boneShieldActive = ok and aura ~= nil
+    end
+    local active = testing or (settings and settings.enabled and addon:IsBloodSpec()
+        and InCombatLockdown() and not boneShieldActive)
+    for _, overlay in pairs(cdmBloodBoneOverlays) do
+        local target = overlay._targetFrame
+        if active and target and target:IsVisible() then
+            overlay:Show()
+            if not overlay._glowActive then
+                local glowType = addon:GetGlowTypeByID(settings.glowType)
+                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+                    overlay._glowActive = true
+                end
+            end
+        else
+            StopBloodBoneOverlay(overlay)
+        end
+    end
+end
+
+function addon:TestBloodBoneReminder()
+    local shown = 0
+    local settings = DKAssistDB and DKAssistDB.bloodBone
+    for _, overlay in pairs(cdmBloodBoneOverlays) do
+        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
+            overlay:Show()
+            local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+            if glowType and glowType.start then pcall(glowType.start, overlay, settings) end
+            overlay._glowActive = true
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then
+        print("|cffcc0000DK Assist:|r Add Marrowrend or Death's Caress to the Cooldown Manager, then use Rescan Bars.")
+    end
+    return shown
+end
+
+local bloodDnDWatcher = CreateFrame("Frame")
+local bloodDnDElapsed = 0
+bloodDnDWatcher:SetScript("OnUpdate", function(_, elapsed)
+    bloodDnDElapsed = bloodDnDElapsed + elapsed
+    if bloodDnDElapsed < 0.10 then return end
+    bloodDnDElapsed = 0
+    addon:RefreshBloodDnDReminder()
+    addon:RefreshBloodBoneReminder()
+end)
+
 function addon:ClearCDMSuddenDoomOverlays()
     for _, overlay in pairs(cdmSuddenDoomOverlays) do
         if overlay._glowActive then
@@ -716,6 +947,10 @@ function addon:CreatePutrefyOverlays()
     end
     wipe(putrefyOverlays)
 
+    -- Putrefy is Unholy-only.  Spec changes can leave old Cooldown Manager
+    -- frames alive, so never recreate their overlays while playing Blood.
+    if not addon:IsUnholySpec() then return end
+
     -- When Cooldown Manager tracking is enabled, Putrefy is intentionally a
     -- CDM-only indicator.  Do not also attach a cross to normal action-bar
     -- buttons; those buttons can sit behind unrelated UI windows and make
@@ -736,7 +971,7 @@ end
 -- Called by CDMHook.lua after Blizzard refreshes a specific CDM item. This
 -- never inspects textures or enumerates arbitrary UI frames.
 function addon:RegisterCDMPutrefyFrame(frame)
-    if not DKAssistDB.trackCDMPutrefy or cdmPutrefyOverlays[frame] then return end
+    if not addon:IsUnholySpec() or not DKAssistDB.trackCDMPutrefy or cdmPutrefyOverlays[frame] then return end
     local overlay = CreateOverlay(frame, "putrefy")
     AttachCrossToOverlay(overlay)
     cdmPutrefyOverlays[frame] = overlay
@@ -1228,6 +1463,10 @@ local function ShowPutrefyWarning(duration)
         putrefyDurationTimer = nil
     end
 
+    if not addon:IsUnholySpec() then
+        StopPutrefyWarning()
+        return
+    end
     putrefyWarningActive = true
     local settings = DKAssistDB.putrefy
     if not settings.enabled then return end
@@ -1273,7 +1512,7 @@ local function ShowPutrefyWarning(duration)
 end
 
 function addon:ShowPutrefyHoldWarning()
-    if DKAssistDB and DKAssistDB.putrefy and DKAssistDB.putrefy.enabled then
+    if addon:IsUnholySpec() and DKAssistDB and DKAssistDB.putrefy and DKAssistDB.putrefy.enabled then
         ShowPutrefyWarning()
     end
 end
@@ -1439,21 +1678,29 @@ function addon:StopAll()
     StopFesteringGlow()
     StopPutrefyWarning()
     addon:StopSuddenDoomGlows()
-    addon:StopDnDBuffGlow()
+    addon:StopBloodDnDReminder()
+    addon:StopBloodBoneReminder()
+    addon:StopDnDMissingGlow()
 end
 
 -- -------------------------------------------------------
 -- Death and Decay Tracker
 -- -------------------------------------------------------
 local DND_DURATION  = 10
+local BLOOD_DND_GRACE_DURATION = 4
 local dndFrame      = nil
 local dndHideTimer  = nil
+local dndGraceTimer = nil
+local dndPhaseStart = nil
+local dndPhaseDuration = nil
+local dndPhaseLabel = nil
+local dndActive = false
 
 local function CreateDnDFrame()
     if dndFrame then return dndFrame end
 
     local f = CreateFrame("Frame", "DKAssistDnDTracker", UIParent, "BackdropTemplate")
-    f:SetSize(48, 48)
+    f:SetSize(360, 40)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(10)
@@ -1461,27 +1708,45 @@ local function CreateDnDFrame()
     f:SetMovable(true)
     f:EnableMouse(false)
 
-    -- Border
+    -- Blightfall-style timeline lane with no duplicated spell icon.
     f:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    f:SetBackdropBorderColor(0, 0, 0, 1)
+    f:SetBackdropColor(0.015, 0.02, 0.025, 0.45)
+    f:SetBackdropBorderColor(0.12, 0.18, 0.20, 0.50)
 
-    -- Icon texture
-    f.icon = f:CreateTexture(nil, "ARTWORK")
-    f.icon:SetPoint("TOPLEFT", 1, -1)
-    f.icon:SetPoint("BOTTOMRIGHT", -1, 1)
-    f.icon:SetTexture(136144)
-    f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    f.track = f:CreateTexture(nil, "BACKGROUND")
+    f.track:SetPoint("LEFT", f, "LEFT", 34, 0)
+    f.track:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    f.track:SetHeight(3)
+    f.track:SetColorTexture(1, 1, 1, 0.38)
 
-    -- Cooldown swipe
-    f.cooldown = CreateFrame("Cooldown", nil, f, "CooldownFrameTemplate")
-    f.cooldown:SetAllPoints(f.icon)
-    f.cooldown:SetDrawEdge(true)
-    f.cooldown:SetDrawSwipe(true)
-    f.cooldown:SetReverse(true)
-    f.cooldown:SetHideCountdownNumbers(false)
+    f.nowGlow = f:CreateTexture(nil, "BACKGROUND")
+    f.nowGlow:SetSize(18, 34)
+    f.nowGlow:SetPoint("CENTER", f, "LEFT", 34, 0)
+    f.nowGlow:SetColorTexture(1.00, 0.10, 0.10, 0.07)
+
+    f.nowLine = f:CreateTexture(nil, "OVERLAY")
+    f.nowLine:SetSize(2, 30)
+    f.nowLine:SetPoint("CENTER", f, "LEFT", 34, 0)
+    f.nowLine:SetColorTexture(1, 1, 1, 0.95)
+
+    f.nowText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.nowText:SetPoint("BOTTOM", f.nowLine, "TOP", 0, 0)
+    f.nowText:SetText("On Ground")
+    f.nowText:SetTextColor(1.00, 0.10, 0.10, 1)
+
+    f.marker = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    f.marker:SetSize(168, 24)
+    f.marker:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    f.marker:SetBackdropColor(0, 0, 0, 0)
+    f.marker:SetBackdropBorderColor(0, 0, 0, 0)
+    f.marker.text = f.marker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.marker.text:SetPoint("CENTER")
+    f.marker.text:SetText("Death and Decay 10.0")
+    f.marker.text:SetTextColor(1.00, 0.10, 0.10, 1)
 
     -- Drag handling (only when unlocked)
     f:RegisterForDrag("LeftButton")
@@ -1498,21 +1763,32 @@ local function CreateDnDFrame()
         end
     end)
 
+    f:SetScript("OnUpdate", function(self)
+        if not dndActive or not dndPhaseStart or not dndPhaseDuration then return end
+        local remaining = math.max(0, dndPhaseDuration - (GetTime() - dndPhaseStart))
+        local pct = math.max(0, math.min(1, remaining / dndPhaseDuration))
+        local hitX = 34
+        local farX = self:GetWidth() - 94
+        local x = hitX + ((farX - hitX) * pct)
+        self.marker:ClearAllPoints()
+        self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+        self.marker.text:SetText(string.format("%s %.1f", dndPhaseLabel or "Death and Decay", remaining))
+    end)
+
     f:Hide()
     dndFrame = f
     return f
 end
 
-local dndActive = false  -- true when the 10s timer is running
-
 local function UpdateDnDDesaturation()
     if not dndFrame then return end
     if dndActive then
-        dndFrame.icon:SetDesaturated(false)
-        dndFrame.icon:SetVertexColor(1, 1, 1, 1)
+        dndFrame.marker:SetAlpha(1)
     else
-        dndFrame.icon:SetDesaturated(true)
-        dndFrame.icon:SetVertexColor(0.6, 0.6, 0.6, 1)
+        dndFrame.marker:SetAlpha(0.45)
+        dndFrame.marker.text:SetText("Death and Decay Ready")
+        dndFrame.marker:ClearAllPoints()
+        dndFrame.marker:SetPoint("CENTER", dndFrame, "LEFT", 120, 0)
     end
 end
 
@@ -1527,11 +1803,25 @@ local function ShowDnDAlwaysShow()
     end
 end
 
+local function ApplyDnDTimelineColor(grace)
+    if not dndFrame or not DKAssistDB or not DKAssistDB.dnd then return end
+    local s = DKAssistDB.dnd
+    local c = grace and s.graceColor or s.color
+    c = c or (grace and {r = 1, g = 0.45, b = 0.08} or {r = 1, g = 0.10, b = 0.10})
+    dndFrame.track:SetColorTexture(1, 1, 1, 0.38)
+    dndFrame.nowGlow:SetColorTexture(c.r, c.g, c.b, 0.07)
+    dndFrame.nowLine:SetColorTexture(1, 1, 1, 0.95)
+    -- The labels keep the selected timer/grace color; only the timeline is white.
+    dndFrame.nowText:SetTextColor(c.r, c.g, c.b, 1)
+    dndFrame.marker.text:SetTextColor(c.r, c.g, c.b, 1)
+end
+
 local function ApplyDnDSettings()
     if not dndFrame then return end
     local s = DKAssistDB.dnd
     local size = s.size or 48
-    dndFrame:SetSize(size, size)
+    dndFrame:SetScale(math.max(0.65, math.min(1.60, size / 48)))
+    ApplyDnDTimelineColor(dndPhaseLabel == "Cleaving Strikes")
 
     if s.position then
         dndFrame:ClearAllPoints()
@@ -1550,6 +1840,19 @@ function addon:InitDnDTracker()
 end
 
 function addon:OnDeathAndDecayCast()
+    -- Blood DnD is ready again after its normal cooldown, or sooner when
+    -- Crimson Scourge procs (handled by RefreshBloodDnDReminder above).
+    if addon:IsBloodSpec() then
+        bloodDnDReady = false
+        if bloodDnDReadyTimer then bloodDnDReadyTimer:Cancel() end
+        bloodDnDReadyTimer = C_Timer.NewTimer(BLOOD_DND_COOLDOWN, function()
+            bloodDnDReadyTimer = nil
+            bloodDnDReady = true
+            addon:RefreshBloodDnDReminder()
+        end)
+        addon:RefreshBloodDnDReminder()
+    end
+
     local s = DKAssistDB.dnd
     if not s or not s.enabled then return end
 
@@ -1560,26 +1863,49 @@ function addon:OnDeathAndDecayCast()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
 
     -- Mark active and show with full color
     dndActive = true
     UpdateDnDDesaturation()
 
-    -- Reset cooldown swipe from scratch
-    dndFrame.cooldown:SetCooldown(GetTime(), DND_DURATION)
+    dndPhaseStart = GetTime()
+    dndPhaseDuration = DND_DURATION
+    dndPhaseLabel = "Death and Decay"
+    dndFrame.marker:SetBackdropColor(0, 0, 0, 0)
+    dndFrame.marker:SetBackdropBorderColor(0, 0, 0, 0)
+    ApplyDnDTimelineColor(false)
     dndFrame:Show()
 
-    -- After duration: hide or go desaturated
-    dndHideTimer = C_Timer.NewTimer(DND_DURATION, function()
+    local function finishTracker()
         dndHideTimer = nil
+        dndGraceTimer = nil
         dndActive = false
-        dndFrame.cooldown:Clear()
-        if s.alwaysShow then
-            UpdateDnDDesaturation()
-        else
-            dndFrame:Hide()
-        end
-    end)
+        dndPhaseStart = nil
+        dndPhaseDuration = nil
+        dndPhaseLabel = nil
+        if s.alwaysShow then UpdateDnDDesaturation() else dndFrame:Hide() end
+    end
+
+    if addon:IsBloodSpec() then
+        -- Cleaving Strikes keeps DnD-enabled effects for four seconds after
+        -- the ground effect ends. Show that grace period as a second phase.
+        dndGraceTimer = C_Timer.NewTimer(DND_DURATION, function()
+            dndGraceTimer = nil
+            dndPhaseStart = GetTime()
+            dndPhaseDuration = BLOOD_DND_GRACE_DURATION
+            dndPhaseLabel = "Cleaving Strikes"
+            dndFrame.marker:SetBackdropColor(0, 0, 0, 0)
+            dndFrame.marker:SetBackdropBorderColor(0, 0, 0, 0)
+            ApplyDnDTimelineColor(true)
+            dndHideTimer = C_Timer.NewTimer(BLOOD_DND_GRACE_DURATION, finishTracker)
+        end)
+    else
+        dndHideTimer = C_Timer.NewTimer(DND_DURATION, finishTracker)
+    end
 end
 
 function addon:TestDnDTracker()
@@ -1590,12 +1916,20 @@ function addon:TestDnDTracker()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
 
     -- Show the frame with no swipe during test — just the icon for positioning
     dndActive = false
-    dndFrame.cooldown:Clear()
-    dndFrame.icon:SetDesaturated(false)
-    dndFrame.icon:SetVertexColor(1, 1, 1, 1)
+    dndPhaseStart = nil
+    dndPhaseDuration = nil
+    dndPhaseLabel = nil
+    dndFrame.marker:SetAlpha(1)
+    dndFrame.marker.text:SetText("Death and Decay Timer")
+    dndFrame.marker:ClearAllPoints()
+    dndFrame.marker:SetPoint("CENTER", dndFrame, "CENTER", 20, 0)
     dndFrame:Show()
     dndFrame:EnableMouse(true) -- always draggable during test
 end
@@ -1605,9 +1939,15 @@ function addon:StopDnDTest()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
     if dndFrame then
         dndActive = false
-        dndFrame.cooldown:Clear()
+        dndPhaseStart = nil
+        dndPhaseDuration = nil
+        dndPhaseLabel = nil
         -- Restore lock state and alwaysShow behavior
         ApplyDnDSettings()
         if not DKAssistDB.dnd.alwaysShow then
@@ -1628,194 +1968,176 @@ end
 -- -------------------------------------------------------
 -- Death and Decay Buff Reminder (Blood)
 -- -------------------------------------------------------
--- Standing inside your own Death and Decay grants buff 188290.  That aura is
--- secret in 12.1 just like Lesser Ghoul, so watch the visibility of its
--- tracked Cooldown Manager icon rather than reading the aura directly.  With
--- no such icon registered the reminder simply stays silent.
-local BLOOD_SPEC_ID = 250
+-- Companion to the readiness reminder further up.  Standing inside your own
+-- Death and Decay grants buff 188290.  That aura is secret in 12.1 just like
+-- Lesser Ghoul, so watch the visibility of its tracked Cooldown Manager icon
+-- rather than reading the aura directly.  With no such icon registered the
+-- reminder simply stays silent.
+local dndMissingBarOverlays = {}
+local cdmDnDMissingOverlays = {}
+local dndMissingGlowActive  = false
 
-local dndBuffOverlays   = {}
-local cdmDnDOverlays    = {}
-local dndBuffFrame      = nil
-local dndBuffGlowActive = false
-local isBloodSpec       = false
-
-function addon:RefreshBloodSpec()
-    local ok, specID = pcall(function()
-        local index = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization
-            and C_SpecializationInfo.GetSpecialization())
-            or (GetSpecialization and GetSpecialization())
-        if not index then return nil end
-        if C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo then
-            return C_SpecializationInfo.GetSpecializationInfo(index)
-        end
-        return GetSpecializationInfo and GetSpecializationInfo(index) or nil
-    end)
-    isBloodSpec = (ok and specID == BLOOD_SPEC_ID) or false
+local function DnDMissingSettings()
+    return DKAssistDB and DKAssistDB.bloodDndMissing
 end
 
-function addon:IsBloodSpec()
-    return isBloodSpec
+local function DnDMissingEnabled()
+    local settings = DnDMissingSettings()
+    return settings and settings.enabled or false
 end
 
-local function ClearDnDBuffGlow(frame)
-    if not frame or not frame._glowActive then return end
-    local glowType = addon:GetGlowTypeByID(DKAssistDB.dnd.glowType)
-    if glowType and glowType.stop then pcall(glowType.stop, frame) end
-    frame._glowActive = false
+-- The readiness reminder owns the same Cooldown Manager icon.  Once Death and
+-- Decay is ready, "press it" replaces "step back into it" -- you cannot return
+-- to a patch that has already expired -- so never stack the two glows.
+local function BloodDnDGlowActiveOn(frame)
+    local overlay = cdmBloodDnDOverlays[frame]
+    return (overlay and overlay._glowActive) or false
 end
 
-local function ApplyDnDBuffGlow(frame)
-    if not frame or frame._glowActive or not frame:IsVisible() then return end
-    local settings = DKAssistDB.dnd
-    local glowType = addon:GetGlowTypeByID(settings.glowType)
-    if glowType and glowType.start then
-        local ok = pcall(glowType.start, frame, settings)
-        if ok then frame._glowActive = true end
+local function ClearDnDMissingGlow(overlay)
+    if not overlay or not overlay._glowActive then return end
+    local settings = DnDMissingSettings()
+    local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+    if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+    overlay._glowActive = false
+end
+
+local function ApplyDnDMissingGlow(overlay)
+    if not overlay or overlay._glowActive or not overlay:IsVisible() then return end
+    local settings = DnDMissingSettings()
+    local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+    if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+        overlay._glowActive = true
     end
 end
 
-function addon:StopDnDBuffGlow()
-    dndBuffGlowActive = false
+function addon:StopDnDMissingGlow()
+    dndMissingGlowActive = false
     local function hideOverlay(overlay)
-        ClearDnDBuffGlow(overlay)
+        ClearDnDMissingGlow(overlay)
         overlay:Hide()
     end
-    for _, overlay in pairs(dndBuffOverlays) do hideOverlay(overlay) end
-    for _, overlay in pairs(cdmDnDOverlays)  do hideOverlay(overlay) end
-    -- The standalone tracker is glowed directly; it has no overlay child.
-    ClearDnDBuffGlow(dndFrame)
+    for _, overlay in pairs(dndMissingBarOverlays) do hideOverlay(overlay) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do hideOverlay(overlay) end
 end
 
-function addon:ShowDnDBuffGlow()
-    dndBuffGlowActive = true
-    local settings = DKAssistDB and DKAssistDB.dnd
-    if not settings or not settings.buffGlow then return end
+function addon:ShowDnDMissingGlow()
+    if not DnDMissingEnabled() then return end
+    dndMissingGlowActive = true
 
-    local function applyOverlay(overlay)
+    local function applyOverlay(overlay, shared)
         local target = overlay._targetFrame
-        -- Never decorate a hidden or recycled frame.
-        if target and target:IsVisible() then
+        -- Never decorate a hidden or recycled frame, and yield the shared
+        -- Cooldown Manager icon while the readiness glow has it.
+        if target and target:IsVisible() and not (shared and BloodDnDGlowActiveOn(target)) then
             overlay:Show()
-            ApplyDnDBuffGlow(overlay)
+            ApplyDnDMissingGlow(overlay)
         else
-            ClearDnDBuffGlow(overlay)
+            ClearDnDMissingGlow(overlay)
             overlay:Hide()
         end
     end
 
-    for _, overlay in pairs(dndBuffOverlays) do applyOverlay(overlay) end
-    for _, overlay in pairs(cdmDnDOverlays)  do applyOverlay(overlay) end
-    if dndFrame and dndFrame:IsShown() then
-        ApplyDnDBuffGlow(dndFrame)
-    else
-        ClearDnDBuffGlow(dndFrame)
-    end
+    for _, overlay in pairs(dndMissingBarOverlays) do applyOverlay(overlay, false) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do applyOverlay(overlay, true) end
 end
 
--- Action-bar targets.  ButtonScanner only reports Death and Decay because
--- SPELLS.DEATH_AND_DECAY now carries the "deathAndDecay" key.
-function addon:CreateDnDBuffOverlays()
-    for _, overlay in pairs(dndBuffOverlays) do
-        ClearDnDBuffGlow(overlay)
+-- Action-bar targets.  ButtonScanner reports Death and Decay because
+-- SPELLS.DEATH_AND_DECAY carries the "deathAndDecay" key.
+function addon:CreateDnDMissingOverlays()
+    for _, overlay in pairs(dndMissingBarOverlays) do
+        ClearDnDMissingGlow(overlay)
         overlay:Hide()
         overlay:SetParent(nil)
     end
-    wipe(dndBuffOverlays)
+    wipe(dndMissingBarOverlays)
+
+    if not DnDMissingEnabled() then return end
 
     local buttons = (addon.trackedButtons or {}).deathAndDecay
     if buttons then
         for _, button in ipairs(buttons) do
-            dndBuffOverlays[button] = CreateOverlay(button, "deathAndDecay")
+            dndMissingBarOverlays[button] = CreateOverlay(button, "deathAndDecay")
         end
     end
 
-    if dndBuffGlowActive then addon:ShowDnDBuffGlow() end
+    if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
 end
 
--- The Cooldown Manager exposes two distinct frames here: the Death and Decay
--- ability icon (43265) is a glow target, while the buff icon (188290) is the
--- detection source.  CDMHook.lua routes each to its own function below.
-function addon:RegisterCDMDnDFrame(frame)
-    if cdmDnDOverlays[frame] then return end
-    cdmDnDOverlays[frame] = CreateOverlay(frame, "deathAndDecay")
-    if dndBuffGlowActive then addon:ShowDnDBuffGlow() end
+function addon:RegisterCDMDnDMissingFrame(frame)
+    if not DnDMissingEnabled() or cdmDnDMissingOverlays[frame] then return end
+    cdmDnDMissingOverlays[frame] = CreateOverlay(frame, "deathAndDecay")
+    if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
 end
 
-function addon:RegisterCDMDnDBuffFrame(frame)
-    dndBuffFrame = frame
-    -- While the buff is inactive this row reports the ability spell ID, so an
-    -- earlier scan may have registered it as a glow target.  The detection
-    -- source must never be decorated: it is hidden exactly when the reminder
-    -- needs to be visible.
-    local overlay = cdmDnDOverlays[frame]
-    if overlay then
-        ClearDnDBuffGlow(overlay)
-        overlay:Hide()
-        overlay:SetParent(nil)
-        cdmDnDOverlays[frame] = nil
+-- Called for the buff row, which is the detection source and must stay clean.
+function addon:ClearCDMDnDMissingFrame(frame)
+    local overlay = cdmDnDMissingOverlays[frame]
+    if not overlay then return end
+    ClearDnDMissingGlow(overlay)
+    overlay:Hide()
+    overlay:SetParent(nil)
+    cdmDnDMissingOverlays[frame] = nil
+end
+
+function addon:RefreshDnDMissingGlows()
+    if dndMissingGlowActive then
+        addon:StopDnDMissingGlow()
+        addon:ShowDnDMissingGlow()
     end
 end
 
-function addon:RefreshDnDBuffGlows()
-    if dndBuffGlowActive then
-        addon:StopDnDBuffGlow()
-        addon:ShowDnDBuffGlow()
-    end
-end
-
-function addon:TestDnDBuffGlow()
+function addon:TestDnDMissingGlow()
     local shown = 0
     local function force(overlay)
         local target = overlay._targetFrame
         if target and target:IsVisible() then
             overlay:Show()
-            ApplyDnDBuffGlow(overlay)
+            ApplyDnDMissingGlow(overlay)
             shown = shown + 1
         end
     end
-    for _, overlay in pairs(dndBuffOverlays) do force(overlay) end
-    for _, overlay in pairs(cdmDnDOverlays)  do force(overlay) end
-    if dndFrame and dndFrame:IsShown() then
-        ApplyDnDBuffGlow(dndFrame)
-        shown = shown + 1
+    for _, overlay in pairs(dndMissingBarOverlays) do force(overlay) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do force(overlay) end
+    if shown == 0 then
+        print("|cffcc0000DK Assist:|r Put Death and Decay on an action bar, or add it and its buff to the Cooldown Manager, then use Rescan Bars.")
     end
     return shown
 end
 
--- The buff icon is hidden exactly while the player is outside their own
--- Death and Decay.  Check ten times per second and act only on a change.
+-- The buff icon is hidden exactly while the player is outside their own Death
+-- and Decay.  Check ten times per second.
 --
 -- Cleaving Strikes removes the buff and immediately grants it again for a few
 -- seconds when you leave your own patch, so the icon blinks off for a fraction
 -- of a second while the bonus is in fact still up.  Require the icon to stay
 -- hidden for a short grace period before glowing; the glow still clears the
 -- instant the buff comes back.
-local DND_BUFF_GLOW_DELAY = 0.5
-local dndBuffWatcher = CreateFrame("Frame")
-local dndBuffElapsed = 0
-local dndBuffMissingFor = 0
-dndBuffWatcher:SetScript("OnUpdate", function(_, elapsed)
-    dndBuffElapsed = dndBuffElapsed + elapsed
-    if dndBuffElapsed < 0.10 then return end
-    local sincePoll = dndBuffElapsed
-    dndBuffElapsed = 0
+local DND_MISSING_GLOW_DELAY = 0.5
+local dndMissingWatcher = CreateFrame("Frame")
+local dndMissingElapsed = 0
+local dndMissingFor     = 0
+dndMissingWatcher:SetScript("OnUpdate", function(_, elapsed)
+    dndMissingElapsed = dndMissingElapsed + elapsed
+    if dndMissingElapsed < 0.10 then return end
+    local sincePoll = dndMissingElapsed
+    dndMissingElapsed = 0
 
-    local settings = DKAssistDB and DKAssistDB.dnd
-    local missing = settings and settings.buffGlow and isBloodSpec and dndBuffFrame
-        and InCombatLockdown() and not dndBuffFrame:IsShown() or false
+    local missing = DnDMissingEnabled() and addon:IsBloodSpec() and bloodDnDBuffFrame
+        and InCombatLockdown() and not bloodDnDBuffFrame:IsShown() or false
 
     if missing then
-        dndBuffMissingFor = dndBuffMissingFor + sincePoll
+        dndMissingFor = dndMissingFor + sincePoll
     else
-        dndBuffMissingFor = 0
+        dndMissingFor = 0
     end
-    local active = missing and dndBuffMissingFor >= DND_BUFF_GLOW_DELAY
 
-    if active and not dndBuffGlowActive then
-        addon:ShowDnDBuffGlow()
-    elseif not active and dndBuffGlowActive then
-        addon:StopDnDBuffGlow()
+    if missing and dndMissingFor >= DND_MISSING_GLOW_DELAY then
+        -- Re-applied every tick rather than only on change: the readiness
+        -- reminder can claim or release the shared icon while this glow is up.
+        addon:ShowDnDMissingGlow()
+    elseif dndMissingGlowActive then
+        addon:StopDnDMissingGlow()
     end
 end)
 
@@ -2077,6 +2399,61 @@ initFrame:SetScript("OnEvent", function(_, event)
             end
         end
 
+        if not DKAssistDB.bloodDnd then
+            DKAssistDB.bloodDnd = CopyTable(addon.DEFAULT_DB.bloodDnd)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodDnd) do
+                if DKAssistDB.bloodDnd[k] == nil then
+                    DKAssistDB.bloodDnd[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        if not DKAssistDB.bloodDndMissing then
+            DKAssistDB.bloodDndMissing = CopyTable(addon.DEFAULT_DB.bloodDndMissing)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodDndMissing) do
+                if DKAssistDB.bloodDndMissing[k] == nil then
+                    DKAssistDB.bloodDndMissing[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        -- Carry over the pre-split setting: this reminder used to live inside
+        -- DKAssistDB.dnd as buffGlow, sharing that table's glow style.
+        if DKAssistDB.dnd.buffGlow ~= nil then
+            DKAssistDB.bloodDndMissing.enabled = DKAssistDB.dnd.buffGlow and true or false
+            for _, field in ipairs({ "glowType", "color", "alpha", "speed", "lines",
+                "thickness", "particles", "scale", "border" }) do
+                local saved = DKAssistDB.dnd[field]
+                if saved ~= nil then
+                    DKAssistDB.bloodDndMissing[field] = type(saved) == "table" and CopyTable(saved) or saved
+                    DKAssistDB.dnd[field] = nil
+                end
+            end
+            DKAssistDB.dnd.buffGlow = nil
+        end
+        -- The timeline reads dnd.color and dnd.graceColor; the migration above
+        -- can strip color when an old profile stored the glow color there.
+        for _, field in ipairs({ "color", "graceColor" }) do
+            if DKAssistDB.dnd[field] == nil then
+                DKAssistDB.dnd[field] = CopyTable(addon.DEFAULT_DB.dnd[field])
+            end
+        end
+
+        if not DKAssistDB.bloodBone then
+            DKAssistDB.bloodBone = CopyTable(addon.DEFAULT_DB.bloodBone)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodBone) do
+                if DKAssistDB.bloodBone[k] == nil then
+                    DKAssistDB.bloodBone[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        -- Bone Shield Reminder was removed from the Blood section.  Disable
+        -- previously saved copies as well so the hidden feature cannot keep
+        -- applying glows for users who enabled it in an earlier test build.
+        DKAssistDB.bloodBone.enabled = false
+        if DKAssistDB.configSpecView == nil then DKAssistDB.configSpecView = "auto" end
+
         -- Soul Reaper defaults
         if not DKAssistDB.soulReaper then
             DKAssistDB.soulReaper = CopyTable(addon.DEFAULT_DB.soulReaper)
@@ -2087,7 +2464,6 @@ initFrame:SetScript("OnEvent", function(_, event)
         end
 
         C_Timer.After(1, function() addon:ScanAllButtons() end)
-        C_Timer.After(1, function() addon:RefreshBloodSpec() end)
         C_Timer.After(1, function() addon:InitDnDTracker() end)
         C_Timer.After(1, function() addon:SetupSoulReaperHook() end)
         C_Timer.After(2, function() addon:ShowPutrefyHoldWarning() end)
@@ -2181,8 +2557,12 @@ initFrame:SetScript("OnEvent", function(_, event)
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
         addon:StopAll()
-        addon:RefreshBloodSpec()
         C_Timer.After(0.5, function() addon:ScanAllButtons() end)
+        C_Timer.After(1, function()
+            if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+            addon:RefreshBloodDnDReminder()
+            addon:RefreshDnDMissingGlows()
+        end)
         -- CDM rescan is handled by ButtonScanner's PLAYER_SPECIALIZATION_CHANGED handler
     end
 end)

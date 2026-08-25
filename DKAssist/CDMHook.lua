@@ -12,10 +12,10 @@ local SUDDEN_DOOM_BUFF_ID = 81340
 -- while the live proc aura uses 81340.
 local SUDDEN_DOOM_CDM_ID = 49530
 local LESSER_GHOUL_SPELL_ID = 1254252
--- Death and Decay appears twice in the CDM: the ability icon is a glow
--- target, while the buff granted by standing in it is the detection source.
 local DEATH_AND_DECAY_SPELL_ID = 43265
-local DND_BUFF_SPELL_ID = 188290
+local DEATH_AND_DECAY_BUFF_ID = 188290
+local MARROWREND_SPELL_ID = 195182
+local DEATHS_CARESS_SPELL_ID = 195292
 local hooked = false
 
 local function GetCDMSpellID(item)
@@ -43,17 +43,30 @@ local function LesserGhoulEnabled()
     return glowEnabled or textEnabled or false
 end
 
-local function DnDBuffGlowEnabled()
-    local settings = DKAssistDB and DKAssistDB.dnd
-    return settings and settings.buffGlow or false
+local function BloodDnDEnabled()
+    return DKAssistDB and DKAssistDB.bloodDnd and DKAssistDB.bloodDnd.enabled
 end
 
--- The tracked Death and Decay buff reports its aura ID only while the aura is
--- active and falls back to the ability ID (43265) otherwise, so the reported
--- spell cannot tell the buff icon apart from the ability icon.  Viewer
--- ownership is stable in both states, so use that instead.  Only reached for
--- items that already matched a Death and Decay spell ID, so the enumeration
--- cost is paid on a handful of frames rather than on every refresh.
+local function BloodBoneEnabled()
+    return DKAssistDB and DKAssistDB.bloodBone and DKAssistDB.bloodBone.enabled
+end
+
+local function BloodDnDMissingEnabled()
+    return DKAssistDB and DKAssistDB.bloodDndMissing and DKAssistDB.bloodDndMissing.enabled
+end
+
+local function AnyBloodDnDEnabled()
+    return BloodDnDEnabled() or BloodDnDMissingEnabled()
+end
+
+-- Death and Decay appears twice in the CDM: the ability icon is a glow target,
+-- while the buff granted by standing in it is the detection source.  The buff
+-- row reports its aura ID only while the aura is active and falls back to the
+-- ability ID (43265) otherwise, so the reported spell cannot tell the two
+-- apart.  Viewer ownership is stable in both states, so use that instead.
+-- Only reached for items that already matched a Death and Decay spell ID, so
+-- the enumeration cost is paid on a handful of frames rather than on every
+-- refresh.
 local function IsBuffViewerItem(item)
     for _, viewer in ipairs({ BuffIconCooldownViewer, BuffBarCooldownViewer }) do
         local pool = viewer and viewer.itemFramePool
@@ -68,13 +81,13 @@ end
 
 local function RegisterItem(item)
     if not DKAssistDB or (not DKAssistDB.trackCDMPutrefy and not DKAssistDB.trackCDMFestering
-        and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled()
-        and not DnDBuffGlowEnabled()) then return end
+        and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not AnyBloodDnDEnabled()
+        and not BloodBoneEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
         local spellID = GetCDMSpellID(item) or GetCDMItemSpellID(item)
-        if DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
+        if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
@@ -83,9 +96,15 @@ local function RegisterItem(item)
             return "deathCoil"
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif DnDBuffGlowEnabled()
-            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DND_BUFF_SPELL_ID) then
-            return IsBuffViewerItem(item) and "dndBuff" or "dndAbility"
+        elseif AnyBloodDnDEnabled()
+            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
+                or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
+            -- A reported aura ID settles it outright; otherwise fall back to
+            -- viewer ownership, which also holds while the aura is down.
+            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
+                and "bloodDndBuff" or "bloodDndAbility"
+        elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
+            return "bloodBoneAbility"
         end
     end)
     if not ok then return end
@@ -98,10 +117,13 @@ local function RegisterItem(item)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
-    elseif kind == "dndAbility" then
-        addon:RegisterCDMDnDFrame(item)
-    elseif kind == "dndBuff" then
-        addon:RegisterCDMDnDBuffFrame(item)
+    elseif kind == "bloodDndAbility" then
+        addon:RegisterCDMBloodDnDAbilityFrame(item)
+        addon:RegisterCDMDnDMissingFrame(item)
+    elseif kind == "bloodDndBuff" then
+        addon:RegisterCDMBloodDnDBuffFrame(item)
+    elseif kind == "bloodBoneAbility" then
+        addon:RegisterCDMBloodBoneAbilityFrame(item)
     end
 end
 
@@ -118,7 +140,7 @@ local function RegisterEllesmereItem(item, euiCDM)
         local spellID = frameData and frameData.spellID
             or euiCDM.GetCanonicalSpellIDForFrame(item)
             or item.spellID or item.overrideSpellID
-        if DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
+        if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
@@ -127,9 +149,14 @@ local function RegisterEllesmereItem(item, euiCDM)
             return "deathCoil"
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif DnDBuffGlowEnabled()
-            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DND_BUFF_SPELL_ID) then
-            return IsBuffViewerItem(item) and "dndBuff" or "dndAbility"
+        elseif AnyBloodDnDEnabled()
+            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
+            -- A reported aura ID settles it outright; otherwise fall back to
+            -- viewer ownership, which also holds while the aura is down.
+            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
+                and "bloodDndBuff" or "bloodDndAbility"
+        elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
+            return "bloodBoneAbility"
         end
     end)
     if not ok then return end
@@ -141,10 +168,13 @@ local function RegisterEllesmereItem(item, euiCDM)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
-    elseif kind == "dndAbility" then
-        addon:RegisterCDMDnDFrame(item)
-    elseif kind == "dndBuff" then
-        addon:RegisterCDMDnDBuffFrame(item)
+    elseif kind == "bloodDndAbility" then
+        addon:RegisterCDMBloodDnDAbilityFrame(item)
+        addon:RegisterCDMDnDMissingFrame(item)
+    elseif kind == "bloodDndBuff" then
+        addon:RegisterCDMBloodDnDBuffFrame(item)
+    elseif kind == "bloodBoneAbility" then
+        addon:RegisterCDMBloodBoneAbilityFrame(item)
     end
 end
 
