@@ -28,11 +28,37 @@ addon.SPELLS = {
         id   = 43265,
         name = "Death and Decay",
         icon = 136144,
+        key  = "deathAndDecay",
+    },
+    DEATH_AND_DECAY_BUFF = {
+        id   = 188290,
+        name = "Death and Decay Buff",
+        key  = nil,
+    },
+    BONE_SHIELD = {
+        id   = 195181,
+        name = "Bone Shield",
+        key  = nil,
+    },
+    MARROWREND = {
+        id   = 195182,
+        name = "Marrowrend",
+        key  = nil,
+    },
+    DEATHS_CARESS = {
+        id   = 195292,
+        name = "Death's Caress",
         key  = nil,
     },
     SOUL_REAPER = {
         id   = 343294,
         name = "Soul Reaper",
+        key  = nil,
+    },
+    BLIGHTFALL = {
+        id   = 1271967,
+        name = "Blightfall",
+        icon = 5976940,
         key  = nil,
     },
     DEATH_COIL = { id = 47541, name = "Death Coil", key = "deathCoil" },
@@ -174,6 +200,7 @@ addon.DEFAULT_DB = {
     trackCDMFestering = false,
     trackCDMPutrefy   = false,
     trackCDMSuddenDoom = false,
+    configSpecView    = "auto",
     runicPowerWarning = true,
     runicPower = {
         enabled = true,
@@ -200,7 +227,67 @@ addon.DEFAULT_DB = {
         size       = 48,
         locked     = false,
         alwaysShow = false,
+        color      = {r = 0.20, g = 1.00, b = 0.25},
+        graceColor = {r = 1.00, g = 0.45, b = 0.08},
         position   = nil,  -- {point, relPoint, x, y}
+    },
+    blightfallChain = {
+        enabled         = false,
+        iconEnabled     = false,
+        soundEnabled    = true,
+        soundVolume     = 100,
+        soulReaperDelay = 6.0,
+        blightfallDelay = 7.5,
+        size            = 48,
+        locked          = false,
+        position        = nil,
+        iconSize        = 64,
+        iconLocked      = false,
+        iconPosition    = nil,
+        fontSize        = 18,
+        showSpellNames  = true,
+        glowType        = "button",
+        color           = { r = 0.72, g = 0.40, b = 1.00 },
+        speed           = 0.25,
+        lines           = 8,
+        thickness       = 2,
+        alpha           = 1.00,
+    },
+    bloodDnd = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 0.85, g = 0.10, b = 0.10},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
+    },
+    bloodDndMissing = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 0.85, g = 0.10, b = 0.10},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
+    },
+    bloodBone = {
+        enabled   = false,
+        glowType  = "pixel",
+        color     = {r = 0.85, g = 0.10, b = 0.10},
+        alpha     = 1.0,
+        speed     = 0.25,
+        lines     = 8,
+        thickness = 2,
+        particles = 4,
+        scale     = 1.0,
+        border    = false,
     },
     soulReaper = {
         suppressMode = "off",  -- "off", "cooldown", "always"
@@ -440,8 +527,47 @@ local cdmFesteringOverlays = {}
 local cdmPutrefyOverlays   = {}
 local suddenDoomOverlays   = {}
 local cdmSuddenDoomOverlays = {}
+local cdmBloodDnDOverlays = {}
+local dndMissingBarOverlays = {}
+local cdmDnDMissingOverlays = {}
+local cdmBloodBoneOverlays = {}
+-- Keep only Blizzard's engine-driven Tracked Buff frames here.  Ellesmere's
+-- visual bar icons are persistent placeholders, so their :IsShown() state
+-- cannot tell whether the player is actually standing in Death and Decay.
+local bloodDnDBuffFrames = {}
+local bloodDnDTestActive = false
+local bloodDnDReady = true
+local bloodDnDReadyTimer = nil
+-- Shared with the early Blood watcher and the later timeline controller.
+local dndActive = false
+local dndAuraKnownInside = false
+local dndLastAuraAppliedAt = 0
+local dndMissingGlowActive = false
+local BLOOD_DND_COOLDOWN = 15
+local CRIMSON_SCOURGE_AURA_ID = 81141
 local suddenDoomActive = false
 local putrefyWarningActive = false
+
+function addon:GetActiveSpecID()
+    if not (GetSpecialization and GetSpecializationInfo) then return nil end
+    local index = GetSpecialization()
+    if not index then return nil end
+    return GetSpecializationInfo(index)
+end
+
+function addon:IsBloodSpec()
+    return self:GetActiveSpecID() == 250
+end
+
+function addon:IsUnholySpec()
+    return self:GetActiveSpecID() == 252
+end
+
+function addon:IsSanlaynHeroSpec()
+    if not (C_ClassTalents and C_ClassTalents.GetActiveHeroTalentSpec) then return false end
+    local ok, heroSpecID = pcall(C_ClassTalents.GetActiveHeroTalentSpec)
+    return ok and heroSpecID == 31
+end
 
 local function GetSuddenDoomOverlaySettings(overlay)
     if DKAssistDB.trackCDMSuddenDoom then return DKAssistDB.suddenDoomGlow end
@@ -605,18 +731,15 @@ local function UpdateCrossAppearance(overlay)
     overlay._crossV:SetPoint("TOP",    overlay, "TOP",    0, 0)
     overlay._crossV:SetPoint("BOTTOM", overlay, "BOTTOM", 0, 0)
 
-    local w, ht = overlay:GetSize()
-    if w and w > 1 then
-        overlay._crossH:SetHeight(math.max(2, ht * thickness))
-        overlay._crossV:SetWidth(math.max(2, w * thickness))
-    end
-
-    overlay:SetScript("OnSizeChanged", function(self, nw, nh)
-        if self._crossH then
-            self._crossH:SetHeight(math.max(2, nh * thickness))
-            self._crossV:SetWidth(math.max(2, nw * thickness))
-        end
-    end)
+    -- Cooldown Manager dimensions can be secret values in 12.1.  Performing
+    -- arithmetic on GetSize()/OnSizeChanged arguments taints execution and
+    -- throws an error in combat.  Convert the user-facing percentage slider
+    -- to a safe fixed pixel width instead; the textures remain anchored to
+    -- all four sides, so the cross still scales to every button.
+    local crossPixels = math.max(2, math.floor(2 + (thickness * 28)))
+    overlay._crossH:SetHeight(crossPixels)
+    overlay._crossV:SetWidth(crossPixels)
+    overlay:SetScript("OnSizeChanged", nil)
 end
 
 function addon:CreateFesteringOverlays()
@@ -674,6 +797,318 @@ function addon:RegisterCDMSuddenDoomFrame(frame, spellKey)
     if suddenDoomActive then addon:ShowSuddenDoomGlows() end
 end
 
+local function StopBloodDnDOverlay(overlay)
+    if overlay._glowActive then
+        local settings = DKAssistDB and DKAssistDB.bloodDnd
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+        overlay._glowActive = false
+    end
+    overlay:Hide()
+end
+
+function addon:StopBloodDnDReminder()
+    bloodDnDTestActive = false
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        StopBloodDnDOverlay(overlay)
+    end
+end
+
+function addon:RegisterCDMBloodDnDAbilityFrame(frame)
+    if not (DKAssistDB and DKAssistDB.bloodDnd and DKAssistDB.bloodDnd.enabled) then return end
+    if cdmBloodDnDOverlays[frame] then return end
+    cdmBloodDnDOverlays[frame] = CreateOverlay(frame, "bloodDnd")
+end
+
+function addon:RegisterCDMBloodDnDBuffFrame(frame)
+    if frame then bloodDnDBuffFrames[frame] = true end
+end
+
+local function DnDMissingSettings()
+    return DKAssistDB and DKAssistDB.bloodDndMissing
+end
+
+local function StopDnDMissingOverlay(overlay)
+    if not overlay then return end
+    if overlay._glowActive then
+        local settings = DnDMissingSettings()
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+        overlay._glowActive = false
+    end
+    overlay:Hide()
+end
+
+local function StartDnDMissingOverlay(overlay)
+    if not overlay or not overlay._targetFrame or not overlay._targetFrame:IsVisible() then return false end
+    local settings = DnDMissingSettings()
+    overlay:Show()
+    if not overlay._glowActive then
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+            overlay._glowActive = true
+        end
+    end
+    return true
+end
+
+function addon:StopDnDMissingGlow()
+    dndMissingGlowActive = false
+    for _, overlay in pairs(dndMissingBarOverlays) do StopDnDMissingOverlay(overlay) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do StopDnDMissingOverlay(overlay) end
+end
+
+function addon:ShowDnDMissingGlow()
+    local settings = DnDMissingSettings()
+    if not (settings and settings.enabled) then return end
+    dndMissingGlowActive = true
+    for _, overlay in pairs(dndMissingBarOverlays) do StartDnDMissingOverlay(overlay) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do StartDnDMissingOverlay(overlay) end
+end
+
+function addon:CreateDnDMissingOverlays()
+    for _, overlay in pairs(dndMissingBarOverlays) do
+        StopDnDMissingOverlay(overlay)
+        overlay:SetParent(nil)
+    end
+    wipe(dndMissingBarOverlays)
+    local settings = DnDMissingSettings()
+    if not (settings and settings.enabled) then return end
+    local buttons = (addon.trackedButtons or {}).deathAndDecay
+    if buttons then
+        for _, button in ipairs(buttons) do
+            dndMissingBarOverlays[button] = CreateOverlay(button, "deathAndDecay")
+        end
+    end
+    if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
+end
+
+function addon:RegisterCDMDnDMissingFrame(frame)
+    local settings = DnDMissingSettings()
+    if not (settings and settings.enabled) or cdmDnDMissingOverlays[frame] then return end
+    cdmDnDMissingOverlays[frame] = CreateOverlay(frame, "deathAndDecay")
+    if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
+end
+
+function addon:ClearCDMDnDMissingFrame(frame)
+    local overlay = cdmDnDMissingOverlays[frame]
+    if not overlay then return end
+    StopDnDMissingOverlay(overlay)
+    overlay:SetParent(nil)
+    cdmDnDMissingOverlays[frame] = nil
+end
+
+function addon:RefreshDnDMissingGlows()
+    if dndMissingGlowActive then
+        addon:StopDnDMissingGlow()
+        addon:ShowDnDMissingGlow()
+    end
+end
+
+function addon:TestDnDMissingGlow()
+    local shown = 0
+    for _, overlays in ipairs({ dndMissingBarOverlays, cdmDnDMissingOverlays }) do
+        for _, overlay in pairs(overlays) do
+            if StartDnDMissingOverlay(overlay) then shown = shown + 1 end
+        end
+    end
+    if shown == 0 then
+        print("|cffcc0000DK Assist:|r Put Death and Decay on an action bar, or add it and its buff to the Cooldown Manager, then use Rescan Bars.")
+    end
+    return shown
+end
+
+function addon:RefreshBloodDnDReminder()
+    local settings = DKAssistDB and DKAssistDB.bloodDnd
+    local crimsonScourgeActive = false
+    -- Crimson Scourge immediately resets Death and Decay. Only test whether
+    -- Blizzard returned the aura; its other fields may be secret in 12.1.
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, CRIMSON_SCOURGE_AURA_ID)
+        crimsonScourgeActive = ok and aura ~= nil
+    end
+    if crimsonScourgeActive then bloodDnDReady = true end
+    local active = bloodDnDTestActive or (settings and settings.enabled and addon:IsBloodSpec()
+        and InCombatLockdown() and bloodDnDReady)
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        local target = overlay._targetFrame
+        if active and target and target:IsVisible() then
+            overlay:Show()
+            if not overlay._glowActive then
+                local glowType = addon:GetGlowTypeByID(settings.glowType)
+                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+                    overlay._glowActive = true
+                end
+            end
+        else
+            StopBloodDnDOverlay(overlay)
+        end
+    end
+end
+
+function addon:TestBloodDnDReminder()
+    local settings = DKAssistDB and DKAssistDB.bloodDnd
+    bloodDnDTestActive = true
+    local shown = 0
+    for _, overlay in pairs(cdmBloodDnDOverlays) do
+        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
+            overlay:Show()
+            local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+            if glowType and glowType.start then pcall(glowType.start, overlay, settings) end
+            overlay._glowActive = true
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then
+        bloodDnDTestActive = false
+        print("|cffcc0000DK Assist:|r Add Death and Decay and its buff to the Cooldown Manager, then use Rescan Bars.")
+    end
+    return shown
+end
+
+local function StopBloodBoneOverlay(overlay)
+    if overlay._glowActive then
+        local settings = DKAssistDB and DKAssistDB.bloodBone
+        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
+        overlay._glowActive = false
+    end
+    overlay:Hide()
+end
+
+function addon:RegisterCDMBloodBoneAbilityFrame(frame)
+    if not (DKAssistDB and DKAssistDB.bloodBone and DKAssistDB.bloodBone.enabled) then return end
+    if cdmBloodBoneOverlays[frame] then return end
+    cdmBloodBoneOverlays[frame] = CreateOverlay(frame, "bloodBone")
+end
+
+function addon:StopBloodBoneReminder()
+    for _, overlay in pairs(cdmBloodBoneOverlays) do StopBloodBoneOverlay(overlay) end
+end
+
+function addon:RefreshBloodBoneReminder(testing)
+    local settings = DKAssistDB and DKAssistDB.bloodBone
+    local boneShieldActive = false
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, addon.SPELLS.BONE_SHIELD.id)
+        boneShieldActive = ok and aura ~= nil
+    end
+    local active = testing or (settings and settings.enabled and addon:IsBloodSpec()
+        and InCombatLockdown() and not boneShieldActive)
+    for _, overlay in pairs(cdmBloodBoneOverlays) do
+        local target = overlay._targetFrame
+        if active and target and target:IsVisible() then
+            overlay:Show()
+            if not overlay._glowActive then
+                local glowType = addon:GetGlowTypeByID(settings.glowType)
+                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
+                    overlay._glowActive = true
+                end
+            end
+        else
+            StopBloodBoneOverlay(overlay)
+        end
+    end
+end
+
+function addon:TestBloodBoneReminder()
+    local shown = 0
+    local settings = DKAssistDB and DKAssistDB.bloodBone
+    for _, overlay in pairs(cdmBloodBoneOverlays) do
+        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
+            overlay:Show()
+            local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
+            if glowType and glowType.start then pcall(glowType.start, overlay, settings) end
+            overlay._glowActive = true
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then
+        print("|cffcc0000DK Assist:|r Add Marrowrend or Death's Caress to the Cooldown Manager, then use Rescan Bars.")
+    end
+    return shown
+end
+
+local bloodDnDWatcher = CreateFrame("Frame")
+local bloodDnDElapsed = 0
+local dndMissingFor = 0
+
+local function IsPlayerInsideDeathAndDecay()
+    -- Cooldown Manager skins can keep the tracked-buff frame visible even
+    -- when the aura is inactive.  Checking only :IsShown() therefore never
+    -- triggers the warning in layouts such as EllesmereUI.  Aura presence is
+    -- safe here: no duration, stack count, or other secret numeric value is
+    -- read or compared.
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, addon.SPELLS.DEATH_AND_DECAY_BUFF.id)
+        -- A nil result is ambiguous in 12.1 restricted combat: it can mean
+        -- either "missing" or "secret aura not readable". Only trust a
+        -- positive result here; otherwise continue to the secure CDM frame.
+        if ok and aura ~= nil then return true end
+    end
+
+    -- Ellesmere replaces an inactive tracked buff with its own persistent
+    -- placeholder frame, then swaps the real Blizzard aura frame back into
+    -- the same buff bar when it becomes active.  Reading the bar's clean,
+    -- out-of-combat identity cache plus that placeholder marker gives us the
+    -- live state without touching secret aura values.
+    local euiCDM = EllesmereUI and EllesmereUI._ModuleNS
+        and EllesmereUI._ModuleNS["EllesmereUICooldownManager"]
+    if euiCDM and euiCDM.cdmBarIcons and euiCDM._ecmeFC then
+        local foundTrackedSlot = false
+        for barKey, icons in pairs(euiCDM.cdmBarIcons) do
+            local barData = euiCDM.GetBarData and euiCDM.GetBarData(barKey)
+            if barData and barData.barType == "buffs" then
+                for _, frame in ipairs(icons) do
+                    local fc = euiCDM._ecmeFC[frame]
+                    local spellID = (fc and fc.spellID) or frame._phSpellID
+                    if spellID == addon.SPELLS.DEATH_AND_DECAY_BUFF.id
+                        or spellID == addon.SPELLS.DEATH_AND_DECAY.id then
+                        foundTrackedSlot = true
+                        -- Membership in Ellesmere's live icon list is already
+                        -- the active-state signal. The real Blizzard frame can
+                        -- report IsShown()==false briefly because its original
+                        -- viewer is parked while Ellesmere renders it elsewhere.
+                        if not frame._isPlaceholderFrame then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        if foundTrackedSlot then return false end
+    end
+
+    -- In 12.1 this aura can be secret-flagged during combat, making the direct
+    -- lookup return nil even while it is active. Blizzard's own Tracked Buff
+    -- frame is still driven by the secure aura engine, so its shown state is
+    -- the reliable fallback. Do not use Ellesmere's persistent proxy icons.
+    for frame in pairs(bloodDnDBuffFrames) do
+        if frame and frame.IsShown and frame:IsShown() then return true end
+    end
+    return false
+end
+
+bloodDnDWatcher:SetScript("OnUpdate", function(_, elapsed)
+    bloodDnDElapsed = bloodDnDElapsed + elapsed
+    if bloodDnDElapsed < 0.10 then return end
+    local sincePoll = bloodDnDElapsed
+    bloodDnDElapsed = 0
+    addon:RefreshBloodDnDReminder()
+    addon:RefreshBloodBoneReminder()
+    local settings = DnDMissingSettings()
+    -- The combat-log aura edge is public in restricted combat, unlike the
+    -- direct 12.1 aura query. Only glow during an active Blood DnD window.
+    local missing = settings and settings.enabled and addon:IsBloodSpec()
+        and InCombatLockdown() and dndActive and not dndAuraKnownInside or false
+    if missing then dndMissingFor = dndMissingFor + sincePoll else dndMissingFor = 0 end
+    if missing and dndMissingFor >= 0.5 then
+        addon:ShowDnDMissingGlow()
+    elseif dndMissingGlowActive then
+        addon:StopDnDMissingGlow()
+    end
+end)
+
 function addon:ClearCDMSuddenDoomOverlays()
     for _, overlay in pairs(cdmSuddenDoomOverlays) do
         if overlay._glowActive then
@@ -704,6 +1139,10 @@ function addon:CreatePutrefyOverlays()
     end
     wipe(putrefyOverlays)
 
+    -- Putrefy is Unholy-only.  Spec changes can leave old Cooldown Manager
+    -- frames alive, so never recreate their overlays while playing Blood.
+    if not addon:IsUnholySpec() then return end
+
     -- When Cooldown Manager tracking is enabled, Putrefy is intentionally a
     -- CDM-only indicator.  Do not also attach a cross to normal action-bar
     -- buttons; those buttons can sit behind unrelated UI windows and make
@@ -724,7 +1163,7 @@ end
 -- Called by CDMHook.lua after Blizzard refreshes a specific CDM item. This
 -- never inspects textures or enumerates arbitrary UI frames.
 function addon:RegisterCDMPutrefyFrame(frame)
-    if not DKAssistDB.trackCDMPutrefy or cdmPutrefyOverlays[frame] then return end
+    if not addon:IsUnholySpec() or not DKAssistDB.trackCDMPutrefy or cdmPutrefyOverlays[frame] then return end
     local overlay = CreateOverlay(frame, "putrefy")
     AttachCrossToOverlay(overlay)
     cdmPutrefyOverlays[frame] = overlay
@@ -1216,6 +1655,10 @@ local function ShowPutrefyWarning(duration)
         putrefyDurationTimer = nil
     end
 
+    if not addon:IsUnholySpec() then
+        StopPutrefyWarning()
+        return
+    end
     putrefyWarningActive = true
     local settings = DKAssistDB.putrefy
     if not settings.enabled then return end
@@ -1261,7 +1704,7 @@ local function ShowPutrefyWarning(duration)
 end
 
 function addon:ShowPutrefyHoldWarning()
-    if DKAssistDB and DKAssistDB.putrefy and DKAssistDB.putrefy.enabled then
+    if addon:IsUnholySpec() and DKAssistDB and DKAssistDB.putrefy and DKAssistDB.putrefy.enabled then
         ShowPutrefyWarning()
     end
 end
@@ -1427,48 +1870,499 @@ function addon:StopAll()
     StopFesteringGlow()
     StopPutrefyWarning()
     addon:StopSuddenDoomGlows()
+    addon:StopBloodDnDReminder()
+    addon:StopDnDMissingGlow()
+    addon:StopBloodBoneReminder()
 end
 
 -- -------------------------------------------------------
 -- Death and Decay Tracker
 -- -------------------------------------------------------
 local DND_DURATION  = 10
+-- -------------------------------------------------------
+-- Unholy: Dark Transformation -> Soul Reaper -> Blightfall
+-- -------------------------------------------------------
+local BLIGHTFALL_GRACE = 5
+local blightFrame
+local blightIconFrame
+local blightState
+local blightTest = false
+local blightLastCue
+local blightVoiceID
+
+local function BlightfallSettings()
+    return DKAssistDB and DKAssistDB.blightfallChain
+end
+
+local function BlightfallFallbackSound(now)
+    if now then
+        PlaySound(SOUNDKIT.READY_CHECK, "Master")
+    else
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "Master")
+    end
+end
+
+local function BlightfallSpeak(text, now)
+    local s = BlightfallSettings()
+    if not s or not s.soundEnabled then return end
+    if C_VoiceChat and C_VoiceChat.GetTtsVoices and C_VoiceChat.SpeakText then
+        if not blightVoiceID then
+            local voices = C_VoiceChat.GetTtsVoices()
+            blightVoiceID = voices and voices[1] and voices[1].voiceID
+        end
+        if blightVoiceID then
+            if C_VoiceChat.StopSpeakingText then pcall(C_VoiceChat.StopSpeakingText) end
+            C_Timer.After(0, function()
+                local volume = math.max(0, math.min(100, s.soundVolume or 100))
+                local ok = pcall(C_VoiceChat.SpeakText, blightVoiceID, text, 0, volume, true)
+                if not ok then BlightfallFallbackSound(now) end
+            end)
+            return
+        end
+    end
+    BlightfallFallbackSound(now)
+end
+
+local function BlightfallStepInfo(step)
+    if step == "BLIGHTFALL" then
+        return addon.SPELLS.BLIGHTFALL.id, "Blightfall", addon.SPELLS.BLIGHTFALL.icon
+    end
+    return addon.SPELLS.SOUL_REAPER.id, "Soul Reaper", 636333
+end
+
+local function StopBlightfallReadyGlow(frame)
+    if not (frame and frame._glowActive) then return end
+    for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
+        if glowType.stop then pcall(glowType.stop, frame) end
+    end
+    frame._glowActive = false
+end
+
+local function StartBlightfallReadyGlow(frame)
+    if not frame then return end
+    local settings = BlightfallSettings()
+    local glowType = settings and addon:GetGlowTypeByID(settings.glowType or "button")
+    if not (glowType and glowType.start) then return end
+    StopBlightfallReadyGlow(frame)
+    if pcall(glowType.start, frame, settings) then frame._glowActive = true end
+end
+
+local function UpdateBlightfallIcon(self)
+    if not blightState then StopBlightfallReadyGlow(self); self:Hide(); return end
+    local raw = blightState.delay - (GetTime() - blightState.started)
+    if blightTest and raw <= 0 then
+        local s = BlightfallSettings()
+        local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
+        local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
+        blightState = { step = nextStep, delay = delay, started = GetTime() }
+        blightLastCue = nil
+        return
+    elseif raw < -BLIGHTFALL_GRACE then
+        blightState = nil
+        StopBlightfallReadyGlow(self)
+        self:Hide()
+        if blightFrame then StopBlightfallReadyGlow(blightFrame.marker.glowTarget); blightFrame:Hide() end
+        return
+    end
+    local _, label, iconID = BlightfallStepInfo(blightState.step)
+    self.icon:SetTexture(iconID)
+    if raw <= 0 then
+        self.time:SetText("NOW")
+        self.label:SetText(label)
+        if not self._glowActive then StartBlightfallReadyGlow(self) end
+    else
+        self.time:SetText(string.format("%.1f", raw))
+        self.label:SetText(label)
+        StopBlightfallReadyGlow(self)
+    end
+    local cue
+    if raw <= 0.05 then cue = 0
+    else
+        local rounded = math.ceil(raw)
+        if rounded == 5 or rounded == 3 or rounded == 2 or rounded == 1 then cue = rounded end
+    end
+    if cue ~= nil and cue ~= blightLastCue then
+        blightLastCue = cue
+        if cue == 5 then BlightfallSpeak(label .. " in", false)
+        elseif cue == 0 then BlightfallSpeak("Now", true)
+        else BlightfallSpeak(tostring(cue), false) end
+    end
+end
+
+local function CreateBlightfallIconFrame()
+    if blightIconFrame then return blightIconFrame end
+    local f = CreateFrame("Frame", "DKAssistBlightfallIconAlert", UIParent, "BackdropTemplate")
+    f:SetSize(64, 64)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, -70)
+    f:SetFrameStrata("MEDIUM")
+    f:SetClampedToScreen(true)
+    f:SetMovable(true)
+    f:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+    f:SetBackdropBorderColor(0.72, 0.40, 1.00, 0.95)
+    f.icon = f:CreateTexture(nil, "ARTWORK")
+    f.icon:SetAllPoints(f)
+    f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    f.time = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.time:SetPoint("CENTER", f, "CENTER", 0, 0)
+    f.time:SetTextColor(1, 1, 1, 1)
+    f.time:SetShadowColor(0, 0, 0, 1)
+    f.time:SetShadowOffset(1, -1)
+    f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.label:SetPoint("TOP", f, "BOTTOM", 0, -4)
+    f.label:SetTextColor(0.82, 0.55, 1.00, 1)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        local s = BlightfallSettings()
+        if s and not s.iconLocked then self:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, relPoint, x, y = self:GetPoint()
+        local s = BlightfallSettings()
+        if s then s.iconPosition = { point, relPoint, x, y } end
+    end)
+    f:SetScript("OnUpdate", UpdateBlightfallIcon)
+    f:Hide()
+    blightIconFrame = f
+    return f
+end
+
+local function CreateBlightfallFrame()
+    if blightFrame then return blightFrame end
+    local f = CreateFrame("Frame", "DKAssistBlightfallTimeline", UIParent, "BackdropTemplate")
+    f:SetSize(420, 44)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, -145)
+    f:SetFrameStrata("MEDIUM")
+    f:SetClampedToScreen(true)
+    f:SetClipsChildren(true)
+    f:SetMovable(true)
+    f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    f:SetBackdropColor(0.015, 0.02, 0.025, 0.48)
+    f:SetBackdropBorderColor(0.28, 0.18, 0.38, 0.75)
+
+    f.track = f:CreateTexture(nil, "BACKGROUND")
+    f.track:SetPoint("LEFT", f, "LEFT", 34, 0)
+    f.track:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+    f.track:SetHeight(3)
+    f.track:SetColorTexture(1, 1, 1, 0.42)
+    f.hit = f:CreateTexture(nil, "OVERLAY")
+    f.hit:SetSize(2, 34)
+    f.hit:SetPoint("CENTER", f, "LEFT", 34, 0)
+    f.hit:SetColorTexture(0.72, 0.40, 1.00, 0.95)
+
+    f.marker = CreateFrame("Frame", nil, f)
+    f.marker:SetSize(190, 40)
+    f.marker.icon = f.marker:CreateTexture(nil, "ARTWORK")
+    f.marker.icon:SetSize(34, 34)
+    f.marker.icon:SetPoint("LEFT", f.marker, "LEFT", 4, 0)
+    f.marker.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    -- Glow only the spell icon. Applying LibCustomGlow to the timeline frame
+    -- itself decorates the entire 420px lane instead of the current ability.
+    f.marker.glowTarget = CreateFrame("Frame", nil, f.marker)
+    f.marker.glowTarget:SetAllPoints(f.marker.icon)
+    f.marker.glowTarget:SetFrameLevel(f.marker:GetFrameLevel() + 5)
+    f.marker.text = f.marker:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.marker.text:SetPoint("LEFT", f.marker.icon, "RIGHT", 6, 0)
+    f.marker.text:SetTextColor(0.82, 0.55, 1.00, 1)
+
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        local s = BlightfallSettings()
+        if s and not s.locked then self:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, relPoint, x, y = self:GetPoint()
+        local s = BlightfallSettings()
+        if s then s.position = { point, relPoint, x, y } end
+    end)
+    f:SetScript("OnUpdate", function(self)
+        if not blightState then return end
+        local raw = blightState.delay - (GetTime() - blightState.started)
+        if blightTest and raw <= 0 then
+            local s = BlightfallSettings()
+            local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
+            local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
+            blightState = { step = nextStep, delay = delay, started = GetTime() }
+            blightLastCue = nil
+            return
+        elseif raw < -BLIGHTFALL_GRACE then
+            blightState = nil
+            StopBlightfallReadyGlow(self.marker.glowTarget)
+            self:Hide()
+            return
+        end
+        local eta = math.max(0, raw)
+        local spellID, label, iconID = BlightfallStepInfo(blightState.step)
+        self.marker.icon:SetTexture(iconID)
+        local settings = BlightfallSettings()
+        if settings and settings.showSpellNames == false then
+            self.marker.text:SetText(string.format("%.1f", eta))
+        else
+            self.marker.text:SetText(string.format("%s %.1f", label, eta))
+        end
+        local secondsWide = math.max(8, blightState.delay)
+        local pct = math.max(0, math.min(1, eta / secondsWide))
+        local x = 34 + ((self:GetWidth() - 144) * pct)
+        self.marker:ClearAllPoints()
+        self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+        if raw <= 0 then
+            if not self.marker.glowTarget._glowActive then StartBlightfallReadyGlow(self.marker.glowTarget) end
+        else
+            StopBlightfallReadyGlow(self.marker.glowTarget)
+        end
+
+        local cue
+        if raw <= 0.05 then cue = 0
+        else
+            local rounded = math.ceil(raw)
+            if rounded == 5 or rounded == 3 or rounded == 2 or rounded == 1 then cue = rounded end
+        end
+        if cue ~= nil and cue ~= blightLastCue then
+            blightLastCue = cue
+            if cue == 5 then BlightfallSpeak(label .. " in", false)
+            elseif cue == 0 then BlightfallSpeak("Now", true)
+            else BlightfallSpeak(tostring(cue), false) end
+        end
+    end)
+    f:Hide()
+    blightFrame = f
+    return f
+end
+
+local function ApplyBlightfallSettings()
+    local s = BlightfallSettings()
+    if not s then return end
+    local f = CreateBlightfallFrame()
+    local iconFrame = CreateBlightfallIconFrame()
+    local fontSize = math.max(10, math.min(32, s.fontSize or 18))
+    f.marker.text:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    iconFrame.time:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    iconFrame.label:SetFont(STANDARD_TEXT_FONT, math.max(10, fontSize - 4), "OUTLINE")
+    iconFrame.label:SetShown(s.showSpellNames ~= false)
+    f.marker.text:Show()
+    f:SetScale(math.max(0.65, math.min(1.60, (s.size or 48) / 48)))
+    f:EnableMouse(not s.locked or blightTest)
+    if s.position then
+        f:ClearAllPoints()
+        f:SetPoint(s.position[1], UIParent, s.position[2], s.position[3], s.position[4])
+    end
+    local iconSize = math.max(36, math.min(128, s.iconSize or 64))
+    iconFrame:SetSize(iconSize, iconSize)
+    iconFrame:EnableMouse(not s.iconLocked or blightTest)
+    if s.iconPosition then
+        iconFrame:ClearAllPoints()
+        iconFrame:SetPoint(s.iconPosition[1], UIParent, s.iconPosition[2], s.iconPosition[3], s.iconPosition[4])
+    end
+    if blightState then
+        local raw = blightState.delay - (GetTime() - blightState.started)
+        if raw <= 0 then
+            if s.enabled then StartBlightfallReadyGlow(f.marker.glowTarget) end
+            if s.iconEnabled then StartBlightfallReadyGlow(iconFrame) end
+        else
+            StopBlightfallReadyGlow(f.marker.glowTarget)
+            StopBlightfallReadyGlow(iconFrame)
+        end
+    end
+    if not s.enabled then StopBlightfallReadyGlow(f.marker.glowTarget); f:Hide() end
+    if not s.iconEnabled then StopBlightfallReadyGlow(iconFrame); iconFrame:Hide() end
+    if (not s.enabled and not s.iconEnabled and not blightTest)
+        or (not blightTest and not addon:IsSanlaynHeroSpec()) then
+        StopBlightfallReadyGlow(f.marker.glowTarget)
+        StopBlightfallReadyGlow(iconFrame)
+        f:Hide(); iconFrame:Hide(); blightState = nil
+    end
+end
+
+function addon:OnBlightfallChainSpellCast(spellID)
+    local s = BlightfallSettings()
+    if not s or (not s.enabled and not s.iconEnabled) or not addon:IsUnholySpec()
+        or not addon:IsSanlaynHeroSpec() then return end
+    if spellID == addon.SPELLS.DARK_TRANSFORMATION.id then
+        blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
+    elseif spellID == addon.SPELLS.SOUL_REAPER.id and blightState and blightState.step == "SOUL_REAPER" then
+        blightState = { step = "BLIGHTFALL", delay = s.blightfallDelay or 7.5, started = GetTime() }
+    -- Blightfall always completes/resets the chain. It can be cast without the
+    -- tracked Soul Reaper step, so never leave an older countdown running.
+    elseif spellID == addon.SPELLS.BLIGHTFALL.id then
+        blightState = nil
+    else
+        return
+    end
+    blightLastCue = nil
+    local f = CreateBlightfallFrame()
+    ApplyBlightfallSettings()
+    local iconFrame = CreateBlightfallIconFrame()
+    if blightState then
+        f:SetShown(s.enabled)
+        iconFrame:SetShown(s.iconEnabled)
+    else
+        StopBlightfallReadyGlow(f.marker.glowTarget)
+        f:Hide()
+        StopBlightfallReadyGlow(iconFrame)
+        iconFrame:Hide()
+    end
+end
+
+function addon:RefreshBlightfallTracker() ApplyBlightfallSettings() end
+function addon:TestBlightfallTracker()
+    local s = BlightfallSettings()
+    if not s then return end
+    blightTest = true
+    blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
+    blightLastCue = nil
+    local f = CreateBlightfallFrame()
+    local iconFrame = CreateBlightfallIconFrame()
+    ApplyBlightfallSettings()
+    f:SetShown(s.enabled or not s.iconEnabled)
+    iconFrame:SetShown(s.iconEnabled)
+end
+function addon:StopBlightfallTest()
+    blightTest = false
+    blightState = nil
+    if blightFrame then StopBlightfallReadyGlow(blightFrame.marker.glowTarget); blightFrame:Hide(); ApplyBlightfallSettings() end
+    if blightIconFrame then StopBlightfallReadyGlow(blightIconFrame); blightIconFrame:Hide() end
+end
+
+local BLOOD_DND_GRACE_DURATION = 4
 local dndFrame      = nil
 local dndHideTimer  = nil
+local dndGraceTimer = nil
+local dndPhaseStart = nil
+local dndPhaseDuration = nil
+local dndPhaseLabel = nil
+local dndOutsideFor = 0
+local dndPlayerOutside = false
+local dndGroundExpires = nil
+local dndInsideProxy = nil
+local dndInsideContainer = nil
+local DND_TIMER_ICON = "|T136144:32:32:0:0|t"
+
+local function FormatDnDTimerLabel(label, remaining)
+    if label == "Cleaving Strikes" then
+        return string.format("%s Cleaving Strikes %.1f", DND_TIMER_ICON, remaining)
+    end
+    return string.format("%s %.1f", DND_TIMER_ICON, remaining)
+end
+
+-- WoW 12.1 makes aura 188290 secret while combat restrictions are active.
+-- Do not ask Lua whether it exists.  A Blizzard AuraContainer owns this
+-- overlay and shows/hides it directly, so the inside state remains reliable
+-- in combat without comparing or branching on a secret value.
+local function CreateSecureDnDInsideOverlay(owner)
+    if dndInsideContainer or not owner then return end
+
+    if C_AddOns and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
+        pcall(C_AddOns.LoadAddOn, "Blizzard_AuraContainer")
+    end
+    if C_AddOns and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then return end
+
+    local proxy = CreateFrame("Frame", nil, owner)
+    proxy:SetPoint("BOTTOMLEFT", owner, "TOPLEFT", 0, 0)
+    proxy:SetPoint("BOTTOMRIGHT", owner, "TOPRIGHT", 0, 0)
+    proxy:SetHeight(25)
+    proxy:SetFrameLevel(owner:GetFrameLevel() + 30)
+    proxy:Hide()
+
+    local container = CreateFrame("AuraContainer", nil, proxy, "CustomAuraContainerTemplate")
+    container:SetPoint("CENTER", proxy, "CENTER")
+    container:SetSize(1, 1)
+    container:AddAuraSlot("dndInside", "HELPFUL", {
+        candidateFilters = { includeSpellIDs = { [188290] = true } },
+        initializeFrame = function(button)
+            button:SetAllPoints(proxy)
+            button:SetFrameLevel(proxy:GetFrameLevel() + 1)
+            if button.SetMouseMotionEnabled then button:SetMouseMotionEnabled(false) end
+
+            local cover = button:CreateTexture(nil, "BACKGROUND")
+            cover:SetSize(240, 25)
+            cover:SetPoint("CENTER", button, "CENTER", 0, 0)
+            -- The permanent status plate below uses the same opaque color.
+            -- This hides the opposite label without changing appearance.
+            cover:SetColorTexture(0.015, 0.02, 0.025, 1)
+
+            local text = button:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            text:SetPoint("CENTER", button, "CENTER", 0, 0)
+            text:SetText("Cleaving Active")
+            text:SetTextColor(0.20, 1.00, 0.25, 1)
+            text:SetShadowColor(0, 0, 0, 1)
+            text:SetShadowOffset(1, -1)
+        end,
+    })
+    container:SetUnit("player")
+    container:UpdateAllAuras()
+
+    dndInsideProxy = proxy
+    dndInsideContainer = container
+end
 
 local function CreateDnDFrame()
     if dndFrame then return dndFrame end
 
     local f = CreateFrame("Frame", "DKAssistDnDTracker", UIParent, "BackdropTemplate")
-    f:SetSize(48, 48)
+    f:SetSize(300, 40)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(10)
     f:SetClampedToScreen(true)
+    -- The secure inside/outside status sits just above the timer while the
+    -- timer itself keeps its original compact dimensions.
+    f:SetClipsChildren(false)
     f:SetMovable(true)
     f:EnableMouse(false)
 
-    -- Border
+    -- Blightfall-style timeline lane with no duplicated spell icon.
     f:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    f:SetBackdropBorderColor(0, 0, 0, 1)
+    f:SetBackdropColor(0.015, 0.02, 0.025, 0.45)
+    f:SetBackdropBorderColor(0.12, 0.18, 0.20, 0.50)
 
-    -- Icon texture
-    f.icon = f:CreateTexture(nil, "ARTWORK")
-    f.icon:SetPoint("TOPLEFT", 1, -1)
-    f.icon:SetPoint("BOTTOMRIGHT", -1, 1)
-    f.icon:SetTexture(136144)
-    f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    f.track = f:CreateTexture(nil, "BACKGROUND")
+    f.track:SetPoint("LEFT", f, "LEFT", 34, 0)
+    f.track:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    f.track:SetHeight(3)
+    f.track:SetColorTexture(1, 1, 1, 0.38)
 
-    -- Cooldown swipe
-    f.cooldown = CreateFrame("Cooldown", nil, f, "CooldownFrameTemplate")
-    f.cooldown:SetAllPoints(f.icon)
-    f.cooldown:SetDrawEdge(true)
-    f.cooldown:SetDrawSwipe(true)
-    f.cooldown:SetReverse(true)
-    f.cooldown:SetHideCountdownNumbers(false)
+    f.nowGlow = f:CreateTexture(nil, "BACKGROUND")
+    f.nowGlow:SetSize(18, 34)
+    f.nowGlow:SetPoint("CENTER", f, "LEFT", 34, 0)
+    f.nowGlow:SetColorTexture(1.00, 0.10, 0.10, 0.07)
+
+    f.nowLine = f:CreateTexture(nil, "OVERLAY")
+    f.nowLine:SetSize(2, 30)
+    f.nowLine:SetPoint("CENTER", f, "LEFT", 34, 0)
+    f.nowLine:SetColorTexture(1, 1, 1, 0.95)
+
+    f.nowText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.nowText:SetPoint("BOTTOM", f, "TOP", 0, 5)
+    f.nowText:SetFontObject(GameFontNormalLarge)
+    f.nowText:SetShadowColor(0, 0, 0, 1)
+    f.nowText:SetShadowOffset(1, -1)
+    f.nowText:SetText("")
+    f.nowText:SetTextColor(1.00, 0.10, 0.10, 1)
+
+    -- A small permanent status plate keeps the secure Inside overlay and
+    -- the normal Outside label visually identical, with no stacked text.
+    f.statusBg = f:CreateTexture(nil, "ARTWORK")
+    f.statusBg:SetSize(240, 25)
+    f.statusBg:SetPoint("BOTTOM", f, "TOP", 0, 0)
+    f.statusBg:SetColorTexture(0.015, 0.02, 0.025, 1)
+    f.nowText:SetDrawLayer("OVERLAY", 2)
+
+    CreateSecureDnDInsideOverlay(f)
+
+    f.marker = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    f.marker:SetSize(200, 36)
+    f.marker:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    f.marker:SetBackdropColor(0, 0, 0, 0)
+    f.marker:SetBackdropBorderColor(0, 0, 0, 0)
+    f.marker.text = f.marker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.marker.text:SetPoint("CENTER")
+    f.marker.text:SetText(FormatDnDTimerLabel("Death and Decay", 10))
+    f.marker.text:SetTextColor(1.00, 0.10, 0.10, 1)
 
     -- Drag handling (only when unlocked)
     f:RegisterForDrag("LeftButton")
@@ -1485,28 +2379,78 @@ local function CreateDnDFrame()
         end
     end)
 
+    f:SetScript("OnUpdate", function(self, elapsed)
+        if not dndActive or not dndPhaseStart or not dndPhaseDuration then return end
+        local remaining = math.max(0, dndPhaseDuration - (GetTime() - dndPhaseStart))
+        if remaining <= 0 then
+            self.marker:Hide()
+            return
+        end
+        self.marker:Show()
+        local pct = math.max(0, math.min(1, remaining / dndPhaseDuration))
+        local hitX = 34
+        local farX = self:GetWidth() - 110
+        local x = hitX + ((farX - hitX) * pct)
+        self.marker:ClearAllPoints()
+        self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+        self.marker.text:SetText(FormatDnDTimerLabel(dndPhaseLabel or "Death and Decay", remaining))
+
+        if addon:IsBloodSpec() and dndPhaseLabel == "Cleaving Strikes" then
+            if dndInsideProxy then dndInsideProxy:Hide() end
+            dndOutsideFor = 0
+            dndPlayerOutside = false
+            self.nowText:SetText("Cleaving")
+            local c = DKAssistDB.dnd.graceColor or { r = 1.00, g = 0.45, b = 0.08 }
+            self.nowText:SetTextColor(c.r, c.g, c.b, 1)
+            self.marker.text:SetTextColor(c.r, c.g, c.b, 1)
+        elseif addon:IsBloodSpec() then
+            -- Outside is the default layer.  When 188290 is active the
+            -- secure engine-owned slot above covers it with "Cleaving Active".
+            -- This deliberately contains no protected aura read.
+            if dndInsideProxy and not dndInsideProxy:IsShown() then
+                dndInsideProxy:Show()
+                if dndInsideContainer then pcall(dndInsideContainer.UpdateAllAuras, dndInsideContainer) end
+            end
+            dndOutsideFor = dndOutsideFor + (elapsed or 0)
+            if dndOutsideFor >= 0.5 then
+                dndPlayerOutside = true
+                self.nowText:SetText("Cleaving Missing")
+                self.nowText:SetTextColor(1.00, 0.08, 0.08, 1)
+                self.marker.text:SetTextColor(1.00, 0.08, 0.08, 1)
+            end
+        else
+            if dndInsideProxy then dndInsideProxy:Hide() end
+            dndOutsideFor = 0
+            dndPlayerOutside = false
+            self.nowText:SetText("")
+        end
+    end)
+
     f:Hide()
     dndFrame = f
     return f
 end
 
-local dndActive = false  -- true when the 10s timer is running
-
 local function UpdateDnDDesaturation()
     if not dndFrame then return end
     if dndActive then
-        dndFrame.icon:SetDesaturated(false)
-        dndFrame.icon:SetVertexColor(1, 1, 1, 1)
+        dndFrame.marker:Show()
+        dndFrame.marker:SetAlpha(1)
     else
-        dndFrame.icon:SetDesaturated(true)
-        dndFrame.icon:SetVertexColor(0.6, 0.6, 0.6, 1)
+        dndFrame.marker:Show()
+        dndFrame.marker:SetAlpha(0.45)
+        dndFrame.marker.text:SetText(DND_TIMER_ICON .. " Ready")
+        dndFrame.marker:ClearAllPoints()
+        dndFrame.marker:SetPoint("CENTER", dndFrame, "LEFT", 120, 0)
     end
 end
+
+local ApplyDnDTimelineColor
 
 local function ShowDnDAlwaysShow()
     if not dndFrame then return end
     local s = DKAssistDB.dnd
-    if s.alwaysShow and s.enabled then
+    if addon:IsBloodSpec() and s.alwaysShow and s.enabled then
         dndFrame:Show()
         UpdateDnDDesaturation()
     elseif not dndActive then
@@ -1514,11 +2458,84 @@ local function ShowDnDAlwaysShow()
     end
 end
 
+local function FinishDnDTrackerState()
+    if dndHideTimer then dndHideTimer:Cancel(); dndHideTimer = nil end
+    if dndGraceTimer then dndGraceTimer:Cancel(); dndGraceTimer = nil end
+    dndActive = false
+    dndPhaseStart = nil
+    dndPhaseDuration = nil
+    dndPhaseLabel = nil
+    dndGroundExpires = nil
+    dndAuraKnownInside = (GetTime() - (dndLastAuraAppliedAt or 0)) <= 0.75
+    dndOutsideFor = 0
+    dndPlayerOutside = false
+    if dndInsideProxy then dndInsideProxy:Hide() end
+    addon:StopDnDMissingGlow()
+    if dndFrame then
+        dndFrame.nowText:SetText("")
+        if DKAssistDB.dnd.alwaysShow and addon:IsBloodSpec() then
+            UpdateDnDDesaturation()
+        else
+            dndFrame:Hide()
+        end
+    end
+end
+
+function addon:StartDnDCleavingPhase()
+    if not (dndActive and addon:IsBloodSpec()) then return end
+    if dndPhaseLabel == "Cleaving Strikes" then return end
+    if dndGraceTimer then dndGraceTimer:Cancel(); dndGraceTimer = nil end
+    if dndHideTimer then dndHideTimer:Cancel(); dndHideTimer = nil end
+    dndAuraKnownInside = false
+    dndOutsideFor = 0
+    dndPhaseStart = GetTime()
+    dndPhaseDuration = BLOOD_DND_GRACE_DURATION
+    dndPhaseLabel = "Cleaving Strikes"
+    if dndInsideProxy then dndInsideProxy:Hide() end
+    dndFrame.nowText:SetText("")
+    dndFrame.marker:Show()
+    ApplyDnDTimelineColor(true)
+    dndHideTimer = C_Timer.NewTimer(BLOOD_DND_GRACE_DURATION, FinishDnDTrackerState)
+end
+
+function addon:ResumeDnDGroundPhase()
+    if not (dndActive and addon:IsBloodSpec() and dndGroundExpires) then return end
+    local remaining = dndGroundExpires - GetTime()
+    if remaining <= 0 then return end
+    if dndHideTimer then dndHideTimer:Cancel(); dndHideTimer = nil end
+    if dndGraceTimer then dndGraceTimer:Cancel(); dndGraceTimer = nil end
+    dndAuraKnownInside = true
+    dndOutsideFor = 0
+    addon:StopDnDMissingGlow()
+    dndPhaseStart = GetTime()
+    dndPhaseDuration = remaining
+    dndPhaseLabel = "Death and Decay"
+    ApplyDnDTimelineColor(false)
+    dndGraceTimer = C_Timer.NewTimer(remaining, function()
+        dndGraceTimer = nil
+        addon:StartDnDCleavingPhase()
+    end)
+end
+
+ApplyDnDTimelineColor = function(grace)
+    if not dndFrame or not DKAssistDB or not DKAssistDB.dnd then return end
+    local s = DKAssistDB.dnd
+    local c = grace and s.graceColor or s.color
+    c = c or (grace and {r = 1, g = 0.45, b = 0.08} or {r = 1, g = 0.10, b = 0.10})
+    dndFrame.track:SetColorTexture(1, 1, 1, 0.38)
+    dndFrame.nowGlow:SetColorTexture(c.r, c.g, c.b, 0.07)
+    dndFrame.nowLine:SetColorTexture(1, 1, 1, 0.95)
+    -- The labels keep the selected timer/grace color; only the timeline is white.
+    dndFrame.nowText:SetTextColor(c.r, c.g, c.b, 1)
+    dndFrame.marker.text:SetTextColor(c.r, c.g, c.b, 1)
+end
+
 local function ApplyDnDSettings()
     if not dndFrame then return end
     local s = DKAssistDB.dnd
     local size = s.size or 48
-    dndFrame:SetSize(size, size)
+    dndFrame:SetScale(math.max(0.65, math.min(1.60, size / 48)))
+    ApplyDnDTimelineColor(dndPhaseLabel == "Cleaving Strikes")
 
     if s.position then
         dndFrame:ClearAllPoints()
@@ -1538,7 +2555,11 @@ end
 
 function addon:OnDeathAndDecayCast()
     local s = DKAssistDB.dnd
-    if not s or not s.enabled then return end
+    -- This tracker is intentionally Blood-only; Unholy has its own combat
+    -- tools and no longer shares this saved toggle.
+    if not addon:IsBloodSpec() then return end
+    local glowEnabled = DKAssistDB.bloodDndMissing and DKAssistDB.bloodDndMissing.enabled
+    if not s or (not s.enabled and not glowEnabled) then return end
 
     if not dndFrame then CreateDnDFrame() ApplyDnDSettings() end
 
@@ -1547,25 +2568,34 @@ function addon:OnDeathAndDecayCast()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
 
     -- Mark active and show with full color
     dndActive = true
     UpdateDnDDesaturation()
 
-    -- Reset cooldown swipe from scratch
-    dndFrame.cooldown:SetCooldown(GetTime(), DND_DURATION)
-    dndFrame:Show()
+    dndPhaseStart = GetTime()
+    dndPhaseDuration = DND_DURATION
+    dndPhaseLabel = "Death and Decay"
+    dndGroundExpires = GetTime() + DND_DURATION
+    dndAuraKnownInside = false
+    dndOutsideFor = 0
+    dndPlayerOutside = false
+    dndFrame.nowText:SetText("")
+    dndFrame.marker:Show()
+    dndFrame.marker:SetBackdropColor(0, 0, 0, 0)
+    dndFrame.marker:SetBackdropBorderColor(0, 0, 0, 0)
+    ApplyDnDTimelineColor(false)
+    dndFrame:SetShown(s.enabled)
 
-    -- After duration: hide or go desaturated
-    dndHideTimer = C_Timer.NewTimer(DND_DURATION, function()
-        dndHideTimer = nil
-        dndActive = false
-        dndFrame.cooldown:Clear()
-        if s.alwaysShow then
-            UpdateDnDDesaturation()
-        else
-            dndFrame:Hide()
-        end
+    -- Fallback for clients that do not deliver the aura removal combat-log
+    -- edge: the grace phase still starts when the ground effect expires.
+    dndGraceTimer = C_Timer.NewTimer(DND_DURATION, function()
+        dndGraceTimer = nil
+        addon:StartDnDCleavingPhase()
     end)
 end
 
@@ -1577,12 +2607,24 @@ function addon:TestDnDTracker()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
 
     -- Show the frame with no swipe during test — just the icon for positioning
     dndActive = false
-    dndFrame.cooldown:Clear()
-    dndFrame.icon:SetDesaturated(false)
-    dndFrame.icon:SetVertexColor(1, 1, 1, 1)
+    dndPhaseStart = nil
+    dndPhaseDuration = nil
+    dndPhaseLabel = nil
+    dndOutsideFor = 0
+    dndPlayerOutside = false
+    dndFrame.nowText:SetText("Cleaving Active")
+    dndFrame.nowText:SetTextColor(0.20, 1.00, 0.25, 1)
+    dndFrame.marker:SetAlpha(1)
+    dndFrame.marker.text:SetText(DND_TIMER_ICON .. " Timer")
+    dndFrame.marker:ClearAllPoints()
+    dndFrame.marker:SetPoint("CENTER", dndFrame, "CENTER", 20, 0)
     dndFrame:Show()
     dndFrame:EnableMouse(true) -- always draggable during test
 end
@@ -1592,9 +2634,18 @@ function addon:StopDnDTest()
         dndHideTimer:Cancel()
         dndHideTimer = nil
     end
+    if dndGraceTimer then
+        dndGraceTimer:Cancel()
+        dndGraceTimer = nil
+    end
     if dndFrame then
         dndActive = false
-        dndFrame.cooldown:Clear()
+        dndPhaseStart = nil
+        dndPhaseDuration = nil
+        dndPhaseLabel = nil
+        dndOutsideFor = 0
+        dndPlayerOutside = false
+        dndFrame.nowText:SetText("")
         -- Restore lock state and alwaysShow behavior
         ApplyDnDSettings()
         if not DKAssistDB.dnd.alwaysShow then
@@ -1604,7 +2655,14 @@ function addon:StopDnDTest()
 end
 
 function addon:RefreshDnDTracker()
-    if dndFrame then ApplyDnDSettings() end
+    if not addon:IsBloodSpec() then
+        FinishDnDTrackerState()
+        return
+    end
+    if dndFrame then
+        ApplyDnDSettings()
+        if dndActive then dndFrame:SetShown(DKAssistDB.dnd.enabled) end
+    end
 end
 
 function addon:RefreshDnDAlwaysShow()
@@ -1644,45 +2702,21 @@ local function GetButtonSpellIDForGlow(button)
 end
 
 function addon:SetupSoulReaperHook()
-    -- Hook ActionButton_ShowOverlayGlow for default Blizzard bars
-    if ActionButton_ShowOverlayGlow then
-        hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
-            if not ShouldSuppressSoulReaperGlow() then return end
-            local spellID = GetButtonSpellIDForGlow(button)
-            if spellID == SOUL_REAPER_ID then
-                if ActionButton_HideOverlayGlow then
-                    ActionButton_HideOverlayGlow(button)
-                end
-            end
-        end)
-    end
-
-    -- Hook LibButtonGlow for addon bars (Bartender4, ElvUI, Dominos)
-    local LBG = LibStub and LibStub("LibButtonGlow-1.0", true)
-    if LBG and LBG.ShowOverlayGlow then
-        local origShow = LBG.ShowOverlayGlow
-        LBG.ShowOverlayGlow = function(button, ...)
-            if ShouldSuppressSoulReaperGlow() then
-                local spellID = GetButtonSpellIDForGlow(button)
-                if spellID == SOUL_REAPER_ID then
-                    if LBG.HideOverlayGlow then
-                        LBG.HideOverlayGlow(button)
-                    end
-                    return
-                end
-            end
-            return origShow(button, ...)
-        end
-    end
+    -- Disabled on 12.1. Hiding Blizzard or LibButtonGlow overlays from a hook
+    -- taints protected action-button frames and triggers ADDON_ACTION_FORBIDDEN
+    -- in combat. The timeline and icon reminders do not depend on this hook.
 end
 
 local castFrame = CreateFrame("Frame")
 castFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 castFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 castFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+castFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 
 castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
-    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    if event == "PLAYER_TALENT_UPDATE" then
+        if not addon:IsSanlaynHeroSpec() then addon:StopBlightfallTest() end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if unit ~= "player" then return end
         if spellID == addon.SPELLS.FESTERING_STRIKE.id then
             addon:OnFesteringStrikeCast()
@@ -1695,6 +2729,7 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         elseif spellID == addon.SPELLS.DEATH_AND_DECAY.id then
             addon:OnDeathAndDecayCast()
         end
+        addon:OnBlightfallChainSpellCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
@@ -1868,6 +2903,73 @@ initFrame:SetScript("OnEvent", function(_, event)
             end
         end
 
+        if not DKAssistDB.blightfallChain then
+            DKAssistDB.blightfallChain = CopyTable(addon.DEFAULT_DB.blightfallChain)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.blightfallChain) do
+                if DKAssistDB.blightfallChain[k] == nil then
+                    DKAssistDB.blightfallChain[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+
+        if not DKAssistDB.bloodDnd then
+            DKAssistDB.bloodDnd = CopyTable(addon.DEFAULT_DB.bloodDnd)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodDnd) do
+                if DKAssistDB.bloodDnd[k] == nil then
+                    DKAssistDB.bloodDnd[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        if not DKAssistDB.bloodDndMissing then
+            DKAssistDB.bloodDndMissing = CopyTable(addon.DEFAULT_DB.bloodDndMissing)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodDndMissing) do
+                if DKAssistDB.bloodDndMissing[k] == nil then
+                    DKAssistDB.bloodDndMissing[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        -- Migrate the short-lived development option that stored this
+        -- reminder inside the Death and Decay timer settings.
+        if DKAssistDB.dnd and DKAssistDB.dnd.buffGlow ~= nil then
+            DKAssistDB.bloodDndMissing.enabled = DKAssistDB.dnd.buffGlow and true or false
+            DKAssistDB.dnd.buffGlow = nil
+        end
+        -- The old "ready" glow remains retired. The outside glow is now an
+        -- explicit optional companion to the timeline and must preserve the
+        -- user's checkbox across reloads.
+        DKAssistDB.bloodDnd.enabled = false
+
+        -- Earlier builds used red as the normal timer color.  Migrate that
+        -- legacy default once so the new Inside (normal) -> Outside (red)
+        -- state change is immediately visible without overwriting later
+        -- user color choices.
+        if not DKAssistDB.dnd.insideOutsideColorMigrated then
+            local c = DKAssistDB.dnd.color
+            if c and math.abs((c.r or 0) - 1.00) < 0.01
+                and math.abs((c.g or 0) - 0.10) < 0.01
+                and math.abs((c.b or 0) - 0.10) < 0.01 then
+                DKAssistDB.dnd.color = { r = 0.20, g = 1.00, b = 0.25 }
+            end
+            DKAssistDB.dnd.insideOutsideColorMigrated = true
+        end
+        if not DKAssistDB.bloodBone then
+            DKAssistDB.bloodBone = CopyTable(addon.DEFAULT_DB.bloodBone)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodBone) do
+                if DKAssistDB.bloodBone[k] == nil then
+                    DKAssistDB.bloodBone[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        -- Bone Shield Reminder was removed from the Blood section.  Disable
+        -- previously saved copies as well so the hidden feature cannot keep
+        -- applying glows for users who enabled it in an earlier test build.
+        DKAssistDB.bloodBone.enabled = false
+        if DKAssistDB.configSpecView == nil then DKAssistDB.configSpecView = "auto" end
+
         -- Soul Reaper defaults
         if not DKAssistDB.soulReaper then
             DKAssistDB.soulReaper = CopyTable(addon.DEFAULT_DB.soulReaper)
@@ -1879,7 +2981,8 @@ initFrame:SetScript("OnEvent", function(_, event)
 
         C_Timer.After(1, function() addon:ScanAllButtons() end)
         C_Timer.After(1, function() addon:InitDnDTracker() end)
-        C_Timer.After(1, function() addon:SetupSoulReaperHook() end)
+        -- Soul Reaper overlay suppression is intentionally disabled on 12.1;
+        -- hooking protected action-button glow paths causes forbidden actions.
         C_Timer.After(2, function() addon:ShowPutrefyHoldWarning() end)
 
         if addon.CreateConfigPanel then
@@ -1971,7 +3074,12 @@ initFrame:SetScript("OnEvent", function(_, event)
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
         addon:StopAll()
+        addon:RefreshDnDTracker()
         C_Timer.After(0.5, function() addon:ScanAllButtons() end)
+        C_Timer.After(1, function()
+            if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+            addon:RefreshBloodDnDReminder()
+        end)
         -- CDM rescan is handled by ButtonScanner's PLAYER_SPECIALIZATION_CHANGED handler
     end
 end)

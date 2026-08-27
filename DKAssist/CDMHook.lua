@@ -12,6 +12,10 @@ local SUDDEN_DOOM_BUFF_ID = 81340
 -- while the live proc aura uses 81340.
 local SUDDEN_DOOM_CDM_ID = 49530
 local LESSER_GHOUL_SPELL_ID = 1254252
+local DEATH_AND_DECAY_SPELL_ID = 43265
+local DEATH_AND_DECAY_BUFF_ID = 188290
+local MARROWREND_SPELL_ID = 195182
+local DEATHS_CARESS_SPELL_ID = 195292
 local hooked = false
 
 local function GetCDMSpellID(item)
@@ -39,14 +43,42 @@ local function LesserGhoulEnabled()
     return glowEnabled or textEnabled or false
 end
 
+local function BloodDnDEnabled()
+    return DKAssistDB and DKAssistDB.bloodDnd and DKAssistDB.bloodDnd.enabled
+end
+
+local function BloodDnDMissingEnabled()
+    return DKAssistDB and DKAssistDB.bloodDndMissing and DKAssistDB.bloodDndMissing.enabled
+end
+
+local function AnyBloodDnDEnabled()
+    -- The timer's Inside/Outside status also needs the secure Tracked Buff
+    -- frame even though both legacy glow options are intentionally disabled.
+    local timerEnabled = DKAssistDB and DKAssistDB.dnd and DKAssistDB.dnd.enabled
+        and addon:IsBloodSpec()
+    return BloodDnDEnabled() or BloodDnDMissingEnabled() or timerEnabled
+end
+
+local function IsBuffViewerItem(item)
+    for _, viewer in ipairs({ BuffIconCooldownViewer, BuffBarCooldownViewer }) do
+        if viewer and item and item.IsDescendantOf and item:IsDescendantOf(viewer) then return true end
+    end
+    return false
+end
+
+local function BloodBoneEnabled()
+    return DKAssistDB and DKAssistDB.bloodBone and DKAssistDB.bloodBone.enabled
+end
+
 local function RegisterItem(item)
     if not DKAssistDB or (not DKAssistDB.trackCDMPutrefy and not DKAssistDB.trackCDMFestering
-        and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled()) then return end
+        and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not AnyBloodDnDEnabled()
+        and not BloodBoneEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
         local spellID = GetCDMSpellID(item) or GetCDMItemSpellID(item)
-        if DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
+        if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
@@ -55,6 +87,12 @@ local function RegisterItem(item)
             return "deathCoil"
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
+        elseif AnyBloodDnDEnabled() and (spellID == DEATH_AND_DECAY_SPELL_ID
+            or spellID == DEATH_AND_DECAY_BUFF_ID or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
+            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
+                and "bloodDndBuff" or "bloodDndAbility"
+        elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
+            return "bloodBoneAbility"
         end
     end)
     if not ok then return end
@@ -67,6 +105,14 @@ local function RegisterItem(item)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
+    elseif kind == "bloodDndAbility" then
+        addon:RegisterCDMBloodDnDAbilityFrame(item)
+        addon:RegisterCDMDnDMissingFrame(item)
+    elseif kind == "bloodDndBuff" then
+        addon:RegisterCDMBloodDnDBuffFrame(item)
+        addon:ClearCDMDnDMissingFrame(item)
+    elseif kind == "bloodBoneAbility" then
+        addon:RegisterCDMBloodBoneAbilityFrame(item)
     end
 end
 
@@ -83,7 +129,7 @@ local function RegisterEllesmereItem(item, euiCDM)
         local spellID = frameData and frameData.spellID
             or euiCDM.GetCanonicalSpellIDForFrame(item)
             or item.spellID or item.overrideSpellID
-        if DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
+        if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
@@ -92,6 +138,11 @@ local function RegisterEllesmereItem(item, euiCDM)
             return "deathCoil"
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
+        elseif AnyBloodDnDEnabled() and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
+            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
+                and "bloodDndBuff" or "bloodDndAbility"
+        elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
+            return "bloodBoneAbility"
         end
     end)
     if not ok then return end
@@ -103,19 +154,38 @@ local function RegisterEllesmereItem(item, euiCDM)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
+    elseif kind == "bloodDndAbility" then
+        addon:RegisterCDMBloodDnDAbilityFrame(item)
+        addon:RegisterCDMDnDMissingFrame(item)
+    elseif kind == "bloodDndBuff" then
+        -- Ellesmere's rendered bar icon is a persistent proxy, not the
+        -- engine-driven aura frame.  Do not use it for Inside/Outside state.
+        addon:ClearCDMDnDMissingFrame(item)
+    elseif kind == "bloodBoneAbility" then
+        addon:RegisterCDMBloodBoneAbilityFrame(item)
     end
 end
 
 local function InstallHook()
     if hooked or not CooldownViewerItemMixin then return end
     hooked = true
-    hooksecurefunc(CooldownViewerItemMixin, "RefreshData", RegisterItem)
+    hooksecurefunc(CooldownViewerItemMixin, "RefreshData", function(item)
+        -- RefreshData participates in Blizzard's protected CDM update path.
+        -- Never attach overlays from inside that call (especially in combat),
+        -- because doing so taints the item and can later trigger
+        -- ADDON_ACTION_FORBIDDEN on an unrelated protected Frame operation.
+        if InCombatLockdown() then return end
+        C_Timer.After(0, function()
+            if not InCombatLockdown() then RegisterItem(item) end
+        end)
+    end)
 end
 
 -- The CDM may already have built its item pool before our hook is installed.
 -- Register those current items directly, then the RefreshData hook handles
 -- every later layout, talent, and cooldown update.
 local function RegisterExistingItems()
+    if InCombatLockdown() then return end
     local euiCDM = EllesmereUI and EllesmereUI._ModuleNS
         and EllesmereUI._ModuleNS["EllesmereUICooldownManager"]
     local viewers = {
@@ -165,6 +235,7 @@ end
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
+loader:RegisterEvent("PLAYER_REGEN_ENABLED")
 loader:SetScript("OnEvent", function(_, event, loadedAddon)
     if event == "ADDON_LOADED"
         and loadedAddon ~= "Blizzard_CooldownViewer"

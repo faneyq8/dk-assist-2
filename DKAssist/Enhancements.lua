@@ -1,6 +1,6 @@
 local addonName, addon = ...
 
-local VERSION = "1.6.1"
+local VERSION = "1.7.0"
 local DARK_TRANSFORMATION = 1233448
 
 -- Patch 12.1 marks live cooldown, aura-stack and power values as secret.
@@ -73,12 +73,12 @@ function addon:ShowWhatsNew()
     popup:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 32, insets = {left = 11, right = 12, top = 12, bottom = 11} })
     local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -24)
-    title:SetText("|cff00dd55DK Assist 1.6.1|r — What's New")
+    title:SetText("|cff00dd55DK Assist 1.7.0|r — What's New")
     local text = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     text:SetPoint("TOPLEFT", 34, -62)
     text:SetWidth(320)
     text:SetJustifyH("LEFT")
-    text:SetText("• Festering Scythe now warns near buff expiry\n• Optional combat-start reminder when the buff is missing\n• Leaving combat no longer loses the Festering timer\n• New combat-start delay setting (0-20 seconds)\n• Thanks to thyco for the Festering feedback and fix")
+    text:SetText("• Added Blood Death and Decay / Cleaving tracker\n• Optional glow when the Cleaving buff is missing\n• Added Blightfall and Soul Reaper timeline and icon modes\n• Configurable countdown voice, timing, font size and glow\n• Improved layouts, live previews and Midnight 12.1 safety")
     local close = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
     close:SetSize(110, 24)
     close:SetPoint("BOTTOM", 0, 20)
