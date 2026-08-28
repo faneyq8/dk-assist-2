@@ -9,6 +9,8 @@ local PAGE_ITEMS = {
     { text = "Festering Scythe", value = "festering" },
     { text = "Festering Scythe WA-Style", value = "festeringwa" },
     { text = "Blightfall & Soul Reaper", value = "blightfall" },
+    { text = "Gargoyle Tracker", value = "gargoyle" },
+    { text = "Dark Transformation Tracker", value = "darktransformation" },
     { text = "Sudden Doom", value = "suddendoom" },
     { text = "Sudden Doom WA-Style", value = "suddendoomwa" },
     { text = "Death Coil (Sudden Doom)", value = "deathcoil" },
@@ -16,7 +18,6 @@ local PAGE_ITEMS = {
     { text = "Putrefy", value = "putrefy" },
     { text = "Runic Power", value = "runic" },
     { text = "Death and Decay", value = "dnd" },
-    { text = "Soul Reaper", value = "soulreaper" },
 }
 
 local UNHOLY_PAGE_ITEMS = {}
@@ -149,9 +150,13 @@ local function CreateCard(parent, titleText)
     return card
 end
 
+local function AdjustedY(parent, y)
+    return y + (parent.dkassistHiddenSelectorOffset or 0)
+end
+
 local function CreateText(parent, text, x, y, fontObject, width, color)
     local fs = parent:CreateFontString(nil, "OVERLAY", fontObject or "GameFontNormal")
-    fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, AdjustedY(parent, y))
     fs:SetJustifyH("LEFT")
     if width then fs:SetWidth(width) end
     fs:SetText(text or "")
@@ -161,7 +166,7 @@ end
 
 local function CreateCheck(parent, text, x, y, getter, setter)
     local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    check:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    check:SetPoint("TOPLEFT", parent, "TOPLEFT", x, AdjustedY(parent, y))
     check.Text:SetText(text)
     check.Text:SetFontObject("GameFontNormal")
     check:SetScript("OnClick", function(self)
@@ -305,6 +310,11 @@ local function AttachModernDropdown(dd, parent, width, itemsProvider, currentPro
     end
     modern.SetModernMode = function(_, enabled, palette)
         CloseMenu()
+        if modern.dkassistNavigationHidden then
+            dd:Hide()
+            modern:Hide()
+            return
+        end
         if palette then
             modern.palette = palette
             modern:SetBackdropColor(palette.control[1], palette.control[2], palette.control[3], 1)
@@ -325,7 +335,7 @@ end
 local function CreateDropdown(parent, x, y, width, itemsProvider, currentProvider, setter)
     dropdownSerial = dropdownSerial + 1
     local dd = CreateFrame("Frame", "DKAssistV2Dropdown" .. dropdownSerial, parent, "UIDropDownMenuTemplate")
-    dd:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    dd:SetPoint("TOPLEFT", parent, "TOPLEFT", x, AdjustedY(parent, y))
     UIDropDownMenu_SetWidth(dd, width)
     local function Init()
         UIDropDownMenu_Initialize(dd, function()
@@ -364,7 +374,7 @@ local sliderSerial = 0
 local function CreateSlider(parent, labelText, x, y, width, minValue, maxValue, step, getter, setter)
     sliderSerial = sliderSerial + 1
     local holder = CreateFrame("Frame", nil, parent)
-    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", x, AdjustedY(parent, y))
     holder:SetSize(width + 62, 42)
     local label = CreateText(holder, "", 0, 0, "GameFontNormal")
     local slider = CreateFrame("Slider", "DKAssistV2Slider" .. sliderSerial, holder, "OptionsSliderTemplate")
@@ -507,6 +517,9 @@ function addon:CreateConfigPanel(standalone)
     local pages = {}
     local activePage
     local testActive = false
+    local navButtons = {}
+    local RebuildSidebar = function() end
+    local RefreshSidebarSelection = function() end
 
     local function ActiveConfigSpec()
         local view = DKAssistDB.configSpecView or "auto"
@@ -581,6 +594,7 @@ function addon:CreateConfigPanel(standalone)
         function() return DKAssistDB.configSpecView or "auto" end,
         function(value)
             DKAssistDB.configSpecView = value
+            RebuildSidebar()
             panel:ShowPage(ActiveConfigSpec() == "blood" and "dnd" or "festering")
         end)
     specDropdown:ClearAllPoints()
@@ -588,8 +602,25 @@ function addon:CreateConfigPanel(standalone)
     panel.dkassistSpecLabel = specLabel
     panel.dkassistSpecDropdown = specDropdown
 
+    local sidebar
+    if standalone then
+        sidebar = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        sidebar:SetPoint("TOPLEFT", panel, "TOPLEFT", 10, -58)
+        sidebar:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 64)
+        sidebar:SetWidth(198)
+        sidebar:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+        sidebar:SetBackdropColor(0.010, 0.010, 0.016, 0.98)
+        sidebar:SetBackdropBorderColor(0.25, 0.25, 0.27, 1)
+        panel.dkassistSidebar = sidebar
+        panel.dkassistNavButtons = navButtons
+    end
+
     local pageHolder = CreateFrame("Frame", nil, panel)
-    pageHolder:SetPoint("TOPLEFT", panel, "TOPLEFT", 10, -58)
+    pageHolder:SetPoint("TOPLEFT", panel, "TOPLEFT", standalone and 218 or 10, -58)
     pageHolder:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 82)
 
     local rescanButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
@@ -606,6 +637,12 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetSize(105, 24)
     testButton:SetPoint("LEFT", rescanButton, "RIGHT", 8, 0)
     testButton:SetText("Test")
+    if standalone then
+        rescanButton:ClearAllPoints()
+        rescanButton:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 222, 22)
+        testButton:ClearAllPoints()
+        testButton:SetPoint("LEFT", rescanButton, "RIGHT", 8, 0)
+    end
 
     local cdmCheck = CreateCheck(panel, "Use Cooldown Manager (instead of action bars)", 16, -16,
         function()
@@ -726,6 +763,20 @@ function addon:CreateConfigPanel(standalone)
         selector:ClearAllPoints()
         selector:SetPoint("LEFT", selectorLabel, "RIGHT", -8, -2)
         page[fieldName or "selector"] = selector
+        page.selectorLabel = selectorLabel
+        if standalone then
+            selectorLabel:Hide()
+            selector:Hide()
+            -- The selector occupied the first row in the old Settings layout.
+            -- Standalone navigation replaces it, so subsequent controls should
+            -- use that space instead of retaining an empty 38-pixel band.
+            card.dkassistHiddenSelectorOffset = 38
+            if selector.dkassistModern then
+                selector.dkassistModern.dkassistNavigationHidden = true
+                selector.dkassistModern:Hide()
+                if selector.dkassistModern.menu then selector.dkassistModern.menu:Hide() end
+            end
+        end
     end
 
     local function GlowSettingsFor(key)
@@ -799,7 +850,7 @@ function addon:CreateConfigPanel(standalone)
         if key == "festering" then
             page.hasTextAlerts = true
             page.glowCards = { page.settingsCard, page.previewCard, page.appearanceCard, page.warningCard, page.ghoulCard }
-            page.textSettingsCard = CreateCard(page, "Festering Scythe WA-Style")
+            page.textSettingsCard = CreateCard(page, standalone and "Festering Scythe Text Alert" or "Festering Scythe WA-Style")
             page.textPreviewCard = CreateCard(page, "Text Alert Preview")
 
             local function textSettings()
@@ -1068,7 +1119,7 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "suddendoom"
         page.glowCard = CreateCard(page, "Sudden Doom Glow")
         page.previewCard = CreateCard(page, "Sudden Doom Preview")
-        page.textCard = CreateCard(page, "Sudden Doom WA-Style")
+        page.textCard = CreateCard(page, standalone and "Sudden Doom Text Alert" or "Sudden Doom WA-Style")
         page.textPreviewCard = CreateCard(page, "Text Alert Preview")
         page.appearanceCard = CreateCard(page, "Pixel Glow appearance")
         AddSelector(page, page.glowCard)
@@ -1132,7 +1183,7 @@ function addon:CreateConfigPanel(standalone)
             function(v) textSettings().outline = v; addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
         page.textOutline:ClearAllPoints(); page.textOutline:SetPoint("LEFT", outlineLabel, "RIGHT", -8, -2)
         page.textTest = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
-        page.textTest:SetSize(110, 24); page.textTest:SetPoint("TOPLEFT", page.textCard, "TOPLEFT", 14, -382)
+        page.textTest:SetSize(110, 24); page.textTest:SetPoint("TOPLEFT", page.textCard, "TOPLEFT", 14, AdjustedY(page.textCard, -382))
         page.textTest:SetText("Test Text Alert")
         page.textTest:SetScript("OnClick", function() addon:TestTextAlert("suddenDoom") end)
         page.textReset = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
@@ -1207,6 +1258,12 @@ function addon:CreateConfigPanel(standalone)
             function()
                 return DKAssistDB.putrefy.warningType == "cross" and DKAssistDB.putrefy.crossColor or DKAssistDB.putrefy.glowColor
             end, changed)
+        if standalone then
+            page.helpText = CreateText(page.settingsCard,
+                "Warns you to hold Putrefy while Dark Transformation is unavailable. The warning hides during Dark Transformation and its Death Coil or Epidemic extension.",
+                14, -192, "GameFontHighlightSmall", 365, { 0.64, 0.64, 0.64 })
+            page.helpText:SetSpacing(1)
+        end
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, addon.SPELLS.PUTREFY.id, false)
         page.crossH = page.previewIcon:CreateTexture(nil, "OVERLAY")
         page.crossH:SetPoint("LEFT"); page.crossH:SetPoint("RIGHT")
@@ -1233,6 +1290,7 @@ function addon:CreateConfigPanel(standalone)
         page.refreshAppearance = function()
             local cross = DKAssistDB.putrefy.warningType == "cross"
             page.appearanceCard.title:SetText(cross and "Red Cross appearance" or "Red Glow appearance")
+            if standalone then page.appearanceCard:SetHeight(cross and 165 or 255) end
             page.crossThickness:SetShown(cross); page.crossAlpha:SetShown(cross)
             page.glowSpeed:SetShown(not cross); page.glowLines:SetShown(not cross)
             page.glowThickness:SetShown(not cross); page.glowAlpha:SetShown(not cross)
@@ -1312,30 +1370,54 @@ function addon:CreateConfigPanel(standalone)
         page.showSpellNames = CreateCheck(page.settingsCard, "Show spell names", 205, -108,
             function() return DKAssistDB.blightfallChain.showSpellNames ~= false end,
             function(v) DKAssistDB.blightfallChain.showSpellNames = v; addon:RefreshBlightfallTracker() end)
-        page.soundVolume = CreateSlider(page.settingsCard, "Voice Volume", 14, -142, 190, 0, 100, 5,
+        local displayColumnX = standalone and 210 or 14
+        local timingSliderWidth = standalone and 110 or 190
+        local displaySliderWidth = standalone and 100 or 190
+        page.soundVolume = CreateSlider(page.settingsCard, "Voice Volume", 14, standalone and -184 or -142, timingSliderWidth, 0, 100, 5,
             function() return DKAssistDB.blightfallChain.soundVolume end,
             function(v) DKAssistDB.blightfallChain.soundVolume = v end)
-        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, -190, 190, 1, 12, 0.5,
+        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, standalone and -236 or -194, timingSliderWidth, 1, 12, 0.5,
             function() return DKAssistDB.blightfallChain.soulReaperDelay end,
             function(v) DKAssistDB.blightfallChain.soulReaperDelay = v; addon:RefreshBlightfallTracker() end)
-        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall delay after Soul Reaper", 14, -238, 190, 1, 15, 0.5,
+        page.blightDelay = CreateSlider(page.settingsCard, standalone and "Blightfall delay" or "Blightfall delay after Soul Reaper", 14, standalone and -288 or -246, timingSliderWidth, 1, 15, 0.5,
             function() return DKAssistDB.blightfallChain.blightfallDelay end,
             function(v) DKAssistDB.blightfallChain.blightfallDelay = v; addon:RefreshBlightfallTracker() end)
-        page.size = CreateSlider(page.settingsCard, "Timeline Scale", 14, -286, 190, 24, 96, 1,
+        page.size = CreateSlider(page.settingsCard, "Timeline Scale", displayColumnX, standalone and -184 or -286, displaySliderWidth, 24, 96, 1,
             function() return DKAssistDB.blightfallChain.size end,
             function(v) DKAssistDB.blightfallChain.size = v; addon:RefreshBlightfallTracker() end)
-        page.lock = CreateCheck(page.settingsCard, "Lock position", 14, -338,
+        page.lock = CreateCheck(page.settingsCard, "Lock position", 14, standalone and -300 or -338,
             function() return DKAssistDB.blightfallChain.locked end,
             function(v) DKAssistDB.blightfallChain.locked = v; addon:RefreshBlightfallTracker() end)
-        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, -338,
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, standalone and -300 or -338,
             function() return DKAssistDB.blightfallChain.iconLocked end,
             function(v) DKAssistDB.blightfallChain.iconLocked = v; addon:RefreshBlightfallTracker() end)
-        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -374, 190, 36, 128, 1,
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", displayColumnX, standalone and -236 or -374, displaySliderWidth, 36, 128, 1,
             function() return DKAssistDB.blightfallChain.iconSize or 64 end,
             function(v) DKAssistDB.blightfallChain.iconSize = v; addon:RefreshBlightfallTracker() end)
-        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, -424, 190, 10, 32, 1,
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", displayColumnX, standalone and -288 or -424, displaySliderWidth, 10, 32, 1,
             function() return DKAssistDB.blightfallChain.fontSize or 18 end,
             function(v) DKAssistDB.blightfallChain.fontSize = v; addon:RefreshBlightfallTracker() end)
+        if standalone then
+            local orientationLabel = CreateText(page.settingsCard, "Timeline Orientation:", 14, -150, "GameFontNormal")
+            page.orientation = CreateDropdown(page.settingsCard, 0, 0, 110,
+                function()
+                    return {
+                        { text = "Horizontal", value = "horizontal" },
+                        { text = "Vertical", value = "vertical" },
+                    }
+                end,
+                function() return DKAssistDB.blightfallChain.timelineOrientation or "horizontal" end,
+                function(v)
+                    DKAssistDB.blightfallChain.timelineOrientation = v
+                    addon:RefreshBlightfallTracker()
+                end)
+            page.orientation:ClearAllPoints()
+            page.orientation:SetPoint("LEFT", orientationLabel, "RIGHT", -8, -2)
+            page.lock:ClearAllPoints()
+            page.lock:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 14, AdjustedY(page.settingsCard, -340))
+            page.iconLock:ClearAllPoints()
+            page.iconLock:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 205, AdjustedY(page.settingsCard, -340))
+        end
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id, false)
 
         local glowStyleLabel = CreateText(page.appearanceCard, "Glow Style:", 14, -38, "GameFontNormal")
@@ -1378,36 +1460,93 @@ function addon:CreateConfigPanel(standalone)
         page.refresh = function()
             page.selector.refresh(); page.enable.refresh(); page.sound.refresh(); page.showSpellNames.refresh(); page.soundVolume.refresh(); page.soulDelay.refresh()
             page.blightDelay.refresh(); page.size.refresh(); page.lock.refresh(); page.iconEnable.refresh(); page.iconSize.refresh(); page.iconLock.refresh()
+            if page.orientation then page.orientation.refresh() end
             page.fontSize.refresh(); page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance(); RefreshPreview(page)
         end
         pages.blightfall = page
     end
 
-    local function BuildSoulReaperPage()
+    local function BuildBurstTrackerPage(key, titleText, spellID, description)
         local page = CreateFrame("Frame", nil, pageHolder)
-        page:SetAllPoints(); page.layoutKind = "soul"
-        page.settingsCard = CreateCard(page, "Soul Reaper Mode")
+        page:SetAllPoints(); page.layoutKind = "bursttracker"
+        page.settingsCard = CreateCard(page, titleText)
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.infoCard = CreateCard(page, "How it works")
         AddSelector(page, page.settingsCard)
-        CreateText(page.settingsCard, "Suppress execute glow:", 14, -88, "GameFontNormal")
-        page.mode = CreateDropdown(page.settingsCard, 146, -97, 155,
+        local trackerKey = key == "darktransformation" and "darkTransformation" or key
+        local function settings() return addon:GetBurstTrackerSettings(trackerKey) end
+        local firstY = -76
+        page.timeline = CreateCheck(page.settingsCard, "Enable timeline", 14, firstY,
+            function() return settings().timelineEnabled end,
+            function(v) settings().timelineEnabled = v; addon:RefreshBurstTrackers() end)
+        page.iconMode = CreateCheck(page.settingsCard, "Enable icon mode", 205, firstY,
+            function() return settings().iconEnabled end,
+            function(v) settings().iconEnabled = v; addon:RefreshBurstTrackers() end)
+        page.showName = CreateCheck(page.settingsCard, "Show spell name", 14, firstY - 32,
+            function() return settings().showSpellName ~= false end,
+            function(v) settings().showSpellName = v; addon:RefreshBurstTrackers() end)
+        if key == "gargoyle" then
+            page.damage = CreateCheck(page.settingsCard, "Show damage increase", 205, firstY - 32,
+                function() return settings().showDamage end,
+                function(v) settings().showDamage = v; addon:RefreshBurstTrackers() end)
+        end
+        local orientationLabel = CreateText(page.settingsCard, "Timeline Orientation:", 14, firstY - 75, "GameFontNormal")
+        page.orientation = CreateDropdown(page.settingsCard, 0, 0, 120,
             function()
                 return {
-                    { text = "Off (default)", value = "off" },
-                    { text = "Suppress always", value = "always" },
+                    { text = "Horizontal", value = "horizontal" },
+                    { text = "Vertical", value = "vertical" },
                 }
             end,
-            function() return DKAssistDB.soulReaper.suppressMode or "off" end,
-            function(value) DKAssistDB.soulReaper.suppressMode = value; page.refresh() end)
-        page.description = CreateText(page.settingsCard, "", 18, -138, "GameFontHighlightSmall", 540, { 0.68, 0.68, 0.68 })
-        page.refresh = function()
-            page.selector.refresh(); page.mode.refresh()
-            if (DKAssistDB.soulReaper.suppressMode or "off") == "always" then
-                page.description:SetText("The execute glow on Soul Reaper is completely suppressed at all times.")
-            else
-                page.description:SetText("Soul Reaper execute glow behaves normally using Blizzard's default behavior.")
-            end
+            function() return settings().timelineOrientation or "horizontal" end,
+            function(v) settings().timelineOrientation = v; addon:RefreshBurstTrackers() end)
+        page.orientation:ClearAllPoints()
+        page.orientation:SetPoint("LEFT", orientationLabel, "RIGHT", -6, -2)
+        page.timelineScale = CreateSlider(page.settingsCard, "Timeline Scale", 14, firstY - 112, 190, 40, 96, 1,
+            function() return settings().timelineScale end,
+            function(v) settings().timelineScale = v; addon:RefreshBurstTrackers() end)
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, firstY - 164, 190, 36, 128, 1,
+            function() return settings().iconSize end,
+            function(v) settings().iconSize = v; addon:RefreshBurstTrackers() end)
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, firstY - 216, 190, 10, 32, 1,
+            function() return settings().fontSize end,
+            function(v) settings().fontSize = v; addon:RefreshBurstTrackers() end)
+        page.timelineLock = CreateCheck(page.settingsCard, "Lock timeline", 14, firstY - 270,
+            function() return settings().timelineLocked end,
+            function(v) settings().timelineLocked = v; addon:RefreshBurstTrackers() end)
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, firstY - 270,
+            function() return settings().iconLocked end,
+            function(v) settings().iconLocked = v; addon:RefreshBurstTrackers() end)
+        page.reset = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
+        page.reset:SetSize(145, 24)
+        page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, firstY - 316))
+        page.reset:SetText("Reset Positions")
+        page.reset:SetScript("OnClick", function() addon:ResetBurstTrackerPositions(trackerKey) end)
+        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, spellID, false)
+        if key == "gargoyle" then
+            page.previewIcon:SetBackdrop({
+                bgFile = "Interface\\Icons\\Ability_DeathKnight_SummonGargoyle",
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                edgeSize = 1,
+            })
+            page.previewIcon:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
         end
-        pages.soulreaper = page
+        page.previewIcon:ClearAllPoints()
+        page.previewIcon:SetPoint("TOP", page.previewCard, "TOP", 0, -48)
+        page.previewText = CreateText(page.previewCard,
+            key == "gargoyle" and "Timeline + Icon Mode\n25.0   +65% Damage" or "Timeline + Icon Mode\n30.0",
+            0, 0, "GameFontHighlightSmall", 330, { 0.75, 0.9, 0.75 })
+        page.previewText:ClearAllPoints()
+        page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -8)
+        page.previewText:SetJustifyH("CENTER")
+        page.hint = CreateText(page.infoCard, description .. "\n\nTimeline and icon mode can be enabled together or separately. Unlock a position, press Test, then drag the display where you want it.",
+            18, -45, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
+        page.refresh = function()
+            page.selector.refresh(); page.timeline.refresh(); page.iconMode.refresh(); page.showName.refresh()
+            if page.damage then page.damage.refresh() end
+            page.orientation.refresh(); page.timelineScale.refresh(); page.iconSize.refresh(); page.fontSize.refresh(); page.timelineLock.refresh(); page.iconLock.refresh()
+        end
+        pages[key] = page
     end
 
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
@@ -1418,7 +1557,125 @@ function addon:CreateConfigPanel(standalone)
     BuildGlowPage("runic", "Runic Power Glow", nil)
     BuildDnDPage()
     BuildBlightfallPage()
-    BuildSoulReaperPage()
+    BuildBurstTrackerPage("gargoyle", "Gargoyle Tracker", 42650,
+        "Tracks the 25-second Summon Gargoyle window. It shows the remaining duration, Runic Power spent, current damage increase, and your best result.")
+    BuildBurstTrackerPage("darktransformation", "Dark Transformation Tracker", addon.SPELLS.DARK_TRANSFORMATION.id,
+        "Tracks the real Dark Transformation aura duration, including time added by Death Coil and Epidemic extensions.")
+
+    if standalone then
+        local NAV_GROUPS = {
+            {
+                title = "UNHOLY - WARNINGS",
+                spec = "unholy",
+                items = {
+                    { "Festering Scythe", "festering" },
+                    { "Festering Text Alert", "festeringwa" },
+                    { "Sudden Doom", "suddendoom" },
+                    { "Sudden Doom Text Alert", "suddendoomwa" },
+                    { "Putrefy", "putrefy" },
+                },
+            },
+            {
+                title = "UNHOLY - TRACKERS",
+                spec = "unholy",
+                items = {
+                    { "Blightfall & Soul Reaper", "blightfall" },
+                    { "Gargoyle Tracker", "gargoyle" },
+                    { "Dark Transformation", "darktransformation" },
+                    { "Runic Power", "runic" },
+                },
+            },
+            {
+                title = "SUDDEN DOOM BUTTONS",
+                spec = "unholy",
+                items = {
+                    { "Death Coil", "deathcoil" },
+                    { "Epidemic", "epidemic" },
+                },
+            },
+            {
+                title = "BLOOD",
+                spec = "blood",
+                items = {
+                    { "Death and Decay", "dnd" },
+                },
+            },
+        }
+
+        local sidebarObjects = {}
+        local sidebarSpec
+        local function ClearSidebar()
+            for _, object in ipairs(sidebarObjects) do object:Hide() end
+            wipe(sidebarObjects)
+            wipe(navButtons)
+        end
+
+        local function CreateSidebarHeading(text, y)
+            local heading = sidebar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            heading:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 14, y)
+            heading:SetText(text)
+            heading:SetTextColor(1.00, 0.82, 0.00, 1)
+            sidebarObjects[#sidebarObjects + 1] = heading
+            return y - 22
+        end
+
+        local function CreateSidebarButton(text, key, y)
+            local button = CreateFrame("Button", nil, sidebar, "BackdropTemplate")
+            button:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 8, y)
+            button:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", -8, y)
+            button:SetHeight(27)
+            button:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
+            button:SetBackdropColor(0, 0, 0, 0)
+            button.text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            button.text:SetPoint("LEFT", button, "LEFT", 15, 0)
+            button.text:SetPoint("RIGHT", button, "RIGHT", -8, 0)
+            button.text:SetJustifyH("LEFT")
+            button.text:SetText(text)
+            button.accent = button:CreateTexture(nil, "OVERLAY")
+            button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+            button.accent:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 0)
+            button.accent:SetWidth(3)
+            button.accent:SetColorTexture(1.00, 0.82, 0.00, 1)
+            button.accent:Hide()
+            button:SetScript("OnEnter", function(self)
+                if selectedKey ~= key then self:SetBackdropColor(0.18, 0.15, 0.04, 0.55) end
+            end)
+            button:SetScript("OnLeave", function() RefreshSidebarSelection() end)
+            button:SetScript("OnClick", function() panel:ShowPage(key) end)
+            navButtons[key] = button
+            sidebarObjects[#sidebarObjects + 1] = button
+            return y - 29
+        end
+
+        RefreshSidebarSelection = function()
+            for key, button in pairs(navButtons) do
+                local active = key == selectedKey
+                button:SetBackdropColor(active and 0.24 or 0, active and 0.19 or 0, active and 0.02 or 0, active and 0.88 or 0)
+                button.accent:SetShown(active)
+                button.text:SetTextColor(active and 1.00 or 0.78, active and 0.88 or 0.78, active and 0.18 or 0.78, 1)
+            end
+        end
+
+        RebuildSidebar = function(force)
+            local activeSpec = ActiveConfigSpec()
+            if not force and sidebarSpec == activeSpec and next(navButtons) then
+                RefreshSidebarSelection()
+                return
+            end
+            ClearSidebar()
+            sidebarSpec = activeSpec
+            local y = -15
+            for _, group in ipairs(NAV_GROUPS) do
+                if group.spec == activeSpec then
+                    y = CreateSidebarHeading(group.title, y)
+                    for _, item in ipairs(group.items) do y = CreateSidebarButton(item[1], item[2], y) end
+                    y = y - 8
+                end
+            end
+            RefreshSidebarSelection()
+        end
+        RebuildSidebar()
+    end
 
     local function LayoutPages()
         local width = pageHolder:GetWidth()
@@ -1431,14 +1688,14 @@ function addon:CreateConfigPanel(standalone)
         local gap = 8
         local leftWidth = math.floor((width - gap) * 0.49)
         local rightWidth = width - gap - leftWidth
-        local topHeight = 198
+        local topHeight = standalone and 170 or 198
         local lowerY = -(topHeight + gap)
         local lowerHeight = height - topHeight - gap
 
         for key, page in pairs(pages) do
             for _, card in pairs({ page.settingsCard, page.previewCard, page.warningCard, page.ghoulCard, page.appearanceCard,
                 page.textSettingsCard, page.textPreviewCard, page.textAppearanceCard, page.glowCard, page.textCard,
-                page.explanationCard }) do
+                page.explanationCard, page.infoCard }) do
                 if card then card:ClearAllPoints() end
             end
             if page.hasTextAlerts then
@@ -1449,9 +1706,17 @@ function addon:CreateConfigPanel(standalone)
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, contentTop)
                 page.previewCard:SetSize(rightWidth, topHeight)
                 page.textSettingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, contentTop)
-                page.textSettingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                if standalone then
+                    page.textSettingsCard:SetSize(leftWidth, math.min(height, 500))
+                else
+                    page.textSettingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
                 page.textPreviewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, contentTop)
-                page.textPreviewCard:SetSize(rightWidth, topHeight)
+                if standalone then
+                    page.textPreviewCard:SetSize(rightWidth, 260)
+                else
+                    page.textPreviewCard:SetSize(rightWidth, topHeight)
+                end
                 if page.layoutKind == "festering" then
                     local warningHeight = math.max(174, math.floor((height - topHeight - gap) * 0.62))
                     page.warningCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, contentLowerY)
@@ -1467,15 +1732,32 @@ function addon:CreateConfigPanel(standalone)
                 end
             elseif page.layoutKind == "suddendoom" then
                 page.glowCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.glowCard:SetSize(leftWidth, topHeight)
+                if standalone then
+                    page.glowCard:SetSize(leftWidth, topHeight)
+                else
+                    page.glowCard:SetSize(leftWidth, topHeight)
+                end
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
                 page.previewCard:SetSize(rightWidth, topHeight)
-                page.appearanceCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
-                page.appearanceCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                if standalone then
+                    page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
+                    page.appearanceCard:SetSize(rightWidth, 180)
+                else
+                    page.appearanceCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
+                    page.appearanceCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                end
                 page.textCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.textCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                if standalone then
+                    page.textCard:SetSize(leftWidth, math.min(height, 430))
+                else
+                    page.textCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
                 page.textPreviewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
-                page.textPreviewCard:SetSize(rightWidth, topHeight)
+                if standalone then
+                    page.textPreviewCard:SetSize(rightWidth, 260)
+                else
+                    page.textPreviewCard:SetSize(rightWidth, topHeight)
+                end
             elseif page.layoutKind == "festering" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -1500,13 +1782,21 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.dndTimerHint:SetWidth(math.max(230, leftWidth - 36))
             elseif page.layoutKind == "glow" or page.layoutKind == "putrefy" then
-                if key == "runic" then
+                if key == "runic" or standalone then
                     page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                    page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                    if standalone then
+                        page.settingsCard:SetSize(leftWidth, key == "runic" and 285 or (page.layoutKind == "putrefy" and 235 or topHeight))
+                    else
+                        page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                    end
                     page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
                     page.previewCard:SetSize(rightWidth, topHeight)
                     page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
-                    page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                    if standalone then
+                        page.appearanceCard:SetSize(rightWidth, page.layoutKind == "putrefy" and 165 or 180)
+                    else
+                        page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                    end
                 else
                     page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                     page.settingsCard:SetSize(leftWidth, topHeight)
@@ -1526,16 +1816,40 @@ function addon:CreateConfigPanel(standalone)
                 page.explanation:SetWidth(math.max(210, rightWidth - 32))
             elseif page.layoutKind == "blightfall" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                if standalone then
+                    page.settingsCard:SetSize(leftWidth, math.min(height, 380))
+                else
+                    page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
                 page.previewCard:SetSize(rightWidth, topHeight)
                 page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
-                page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                if standalone then
+                    page.appearanceCard:SetSize(rightWidth, 270)
+                else
+                    page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                end
                 page.hint:SetWidth(math.max(210, rightWidth - 28))
             elseif page.layoutKind == "soul" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
                 page.description:SetWidth(math.max(300, width - 44))
+            elseif page.layoutKind == "bursttracker" then
+                page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                if standalone then
+                    page.settingsCard:SetSize(leftWidth, math.min(height, 455))
+                else
+                    page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
+                page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+                page.previewCard:SetSize(rightWidth, topHeight)
+                page.infoCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
+                if standalone then
+                    page.infoCard:SetSize(rightWidth, 220)
+                else
+                    page.infoCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                end
+                page.hint:SetWidth(math.max(210, rightWidth - 36))
             end
         end
     end
@@ -1553,7 +1867,7 @@ function addon:CreateConfigPanel(standalone)
         testActive = false; testButton:SetText("Test")
         cdmCheck:SetShown(pageKey == "festering" or pageKey == "putrefy" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
         cdmCheck.Text:SetText(key == "putrefy" and "Track on Cooldown Manager" or "Use Cooldown Manager (instead of action bars)")
-        rescanButton:SetShown(key ~= "dnd" and key ~= "blightfall" and key ~= "soulreaper")
+        rescanButton:SetShown(key ~= "dnd" and key ~= "blightfall" and key ~= "soulreaper" and key ~= "gargoyle" and key ~= "darktransformation")
         testButton:SetShown(key ~= "soulreaper")
         cdmCheck.refresh()
         activePage.refresh()
@@ -1562,6 +1876,7 @@ function addon:CreateConfigPanel(standalone)
         elseif (key == "festering" or key == "suddendoom") and activePage.SetMode then
             activePage.SetMode("glow")
         end
+        RefreshSidebarSelection()
     end
 
     function panel:RefreshControls()
@@ -1574,6 +1889,7 @@ function addon:CreateConfigPanel(standalone)
         elseif activeSpec == "unholy" and not pages[selectedKey] then
             selectedKey = "festering"
         end
+        RebuildSidebar()
         LayoutPages()
         self:ShowPage(selectedKey)
     end
@@ -1895,7 +2211,8 @@ function addon:CreateConfigPanel(standalone)
         for _, page in pairs(pages) do
             for _, card in pairs({ page.settingsCard, page.previewCard, page.warningCard, page.ghoulCard,
                 page.appearanceCard, page.textSettingsCard, page.textPreviewCard,
-                page.textAppearanceCard, page.glowCard, page.textCard }) do
+                page.textAppearanceCard, page.glowCard, page.textCard,
+                page.explanationCard, page.infoCard }) do
                 if card and card.SetBackdropColor then
                     if modern then
                         card:SetBackdropColor(palette.card[1], palette.card[2], palette.card[3], 0.98)
@@ -1912,6 +2229,22 @@ function addon:CreateConfigPanel(standalone)
                     end
                 end
             end
+        end
+        if panel.dkassistSidebar then
+            if modern then
+                panel.dkassistSidebar:SetBackdropColor(palette.panel[1], palette.panel[2], palette.panel[3], 0.98)
+                panel.dkassistSidebar:SetBackdropBorderColor(palette.border[1], palette.border[2], palette.border[3], 1)
+                for _, button in pairs(panel.dkassistNavButtons or {}) do
+                    button.accent:SetColorTexture(palette.accent[1], palette.accent[2], palette.accent[3], 1)
+                end
+            else
+                panel.dkassistSidebar:SetBackdropColor(0.010, 0.010, 0.016, 0.98)
+                panel.dkassistSidebar:SetBackdropBorderColor(0.25, 0.25, 0.27, 1)
+                for _, button in pairs(panel.dkassistNavButtons or {}) do
+                    button.accent:SetColorTexture(1.00, 0.82, 0.00, 1)
+                end
+            end
+            RefreshSidebarSelection()
         end
         for _, dropdown in ipairs(self.dkassistModernDropdowns or {}) do
             dropdown:SetModernMode(modern, palette)
@@ -1942,10 +2275,12 @@ function addon:CreateConfigPanel(standalone)
                 if DKAssistDB.bloodDndMissing.enabled and addon.TestDnDMissingGlow then
                     addon:TestDnDMissingGlow()
                 end
-            elseif selectedKey == "blightfall" then addon:TestBlightfallTracker() end
+            elseif selectedKey == "blightfall" then addon:TestBlightfallTracker()
+            elseif selectedKey == "gargoyle" then addon:TestBurstTracker("gargoyle")
+            elseif selectedKey == "darktransformation" then addon:TestBurstTracker("darkTransformation") end
             testButton:SetText("Stop Test")
         else
-            addon:StopAll(); addon:StopDnDTest(); addon:StopBlightfallTest(); addon:StopRunicPowerGlow(); addon:StopBloodDnDReminder(); addon:StopDnDMissingGlow(); addon:StopBloodBoneReminder()
+            addon:StopAll(); addon:StopDnDTest(); addon:StopBlightfallTest(); addon:StopBurstTrackerTest(); addon:StopRunicPowerGlow(); addon:StopBloodDnDReminder(); addon:StopDnDMissingGlow(); addon:StopBloodBoneReminder()
             testButton:SetText("Test")
         end
     end)
@@ -1961,6 +2296,7 @@ function addon:CreateConfigPanel(standalone)
     panel:SetScript("OnHide", function()
         StopPreview(activePage)
         addon:StopBlightfallTest()
+        addon:StopBurstTrackerTest()
         testActive = false; testButton:SetText("Test")
         for _, dropdown in ipairs(panel.dkassistModernDropdowns or {}) do
             if dropdown.menu then dropdown.menu:Hide() end

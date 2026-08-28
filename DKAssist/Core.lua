@@ -239,6 +239,7 @@ addon.DEFAULT_DB = {
         soulReaperDelay = 6.0,
         blightfallDelay = 7.5,
         size            = 48,
+        timelineOrientation = "horizontal",
         locked          = false,
         position        = nil,
         iconSize        = 64,
@@ -2103,9 +2104,14 @@ local function CreateBlightfallFrame()
         end
         local secondsWide = math.max(8, blightState.delay)
         local pct = math.max(0, math.min(1, eta / secondsWide))
-        local x = 34 + ((self:GetWidth() - 144) * pct)
         self.marker:ClearAllPoints()
-        self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+        if settings and settings.timelineOrientation == "vertical" then
+            local y = 34 + ((self:GetHeight() - 144) * pct)
+            self.marker:SetPoint("CENTER", self, "BOTTOM", 0, y)
+        else
+            local x = 34 + ((self:GetWidth() - 144) * pct)
+            self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+        end
         if raw <= 0 then
             if not self.marker.glowTarget._glowActive then StartBlightfallReadyGlow(self.marker.glowTarget) end
         else
@@ -2141,6 +2147,34 @@ local function ApplyBlightfallSettings()
     iconFrame.label:SetFont(STANDARD_TEXT_FONT, math.max(10, fontSize - 4), "OUTLINE")
     iconFrame.label:SetShown(s.showSpellNames ~= false)
     f.marker.text:Show()
+    local vertical = s.timelineOrientation == "vertical"
+    f.track:ClearAllPoints()
+    f.hit:ClearAllPoints()
+    f.marker.icon:ClearAllPoints()
+    f.marker.text:ClearAllPoints()
+    if vertical then
+        f:SetSize(120, 420)
+        f.track:SetSize(3, 1)
+        f.track:SetPoint("BOTTOM", f, "BOTTOM", 0, 34)
+        f.track:SetPoint("TOP", f, "TOP", 0, -12)
+        f.hit:SetSize(100, 2)
+        f.hit:SetPoint("CENTER", f, "BOTTOM", 0, 34)
+        f.marker:SetSize(116, 76)
+        f.marker.icon:SetPoint("TOP", f.marker, "TOP", 0, -2)
+        f.marker.text:SetPoint("TOP", f.marker.icon, "BOTTOM", 0, -4)
+        f.marker.text:SetJustifyH("CENTER")
+    else
+        f:SetSize(420, 44)
+        f.track:SetSize(1, 3)
+        f.track:SetPoint("LEFT", f, "LEFT", 34, 0)
+        f.track:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+        f.hit:SetSize(2, 34)
+        f.hit:SetPoint("CENTER", f, "LEFT", 34, 0)
+        f.marker:SetSize(190, 40)
+        f.marker.icon:SetPoint("LEFT", f.marker, "LEFT", 4, 0)
+        f.marker.text:SetPoint("LEFT", f.marker.icon, "RIGHT", 6, 0)
+        f.marker.text:SetJustifyH("LEFT")
+    end
     f:SetScale(math.max(0.65, math.min(1.60, (s.size or 48) / 48)))
     f:EnableMouse(not s.locked or blightTest)
     if s.position then
@@ -3008,9 +3042,10 @@ initFrame:SetScript("OnEvent", function(_, event)
                     table.insert(UISpecialFrames, "DKAssistSettingsWindow")
                 end
             end
-            -- Original compact window size.  The settings content below is a
-            -- fixed two-column canvas designed specifically for this size.
-            window:SetSize(780, 640)
+            -- The standalone window uses the navigation-first layout.  The
+            -- extra width belongs to the persistent section sidebar; feature
+            -- cards keep the same comfortable two-column working area.
+            window:SetSize(1040, 720)
             window:SetPoint("CENTER")
             window:SetFrameStrata("DIALOG")
             window:SetBackdrop({
