@@ -1,4 +1,4 @@
-# DK Assist Community
+# DK Assist 2
 
 An Unholy Death Knight quality-of-life addon for World of Warcraft Retail / Midnight.
 
