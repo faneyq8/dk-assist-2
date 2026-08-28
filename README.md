@@ -6,6 +6,10 @@ This is a community-maintained fork of **DK Assist** by ZachoWOW. It retains the
 
 ## Features
 
+- **Redesigned standalone interface** — a cleaner sidebar groups warnings, trackers, and Sudden Doom buttons while keeping Blizzard's Settings → AddOns page unchanged.
+- **Gargoyle tracker** — timeline and movable icon modes for the 25-second Summon Gargoyle window, with Runic Power spent, current damage increase, best result, font sizing, and horizontal or vertical timelines.
+- **Dark Transformation tracker** — timeline and movable icon modes that follow the real aura duration, including Death Coil and Epidemic extensions, with horizontal or vertical timelines.
+- **Blightfall & Soul Reaper timeline** — timeline and icon modes, optional spell names, font and icon sizing, voice countdown, configurable glow effects, and horizontal or vertical orientation.
 - **Festering Scythe warning** — configurable action-bar or Cooldown Manager glow when Festering Strike changes to Festering Scythe; includes expiry timing, combat-start reminder, and optional Lesser Ghoul reminder.
 - **Festering Scythe WA-Style alert** — a separate movable text alert with its own timing, font, outline, size, colour presets, live preview, green/yellow/red countdown, an optional EXPIRED state, and an optional Lesser Ghoul missing message.
 - **Sudden Doom glows** — separate, configurable alerts for Death Coil and Epidemic when Sudden Doom procs. Necrotic Coil and Graveyard are also supported where applicable.
