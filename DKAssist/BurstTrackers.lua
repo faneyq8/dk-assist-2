@@ -5,9 +5,18 @@ local GARGOYLE_SPELL_ID = 42650
 local GARGOYLE_TALENT_ID = 1242147
 local GARGOYLE_DURATION = 25
 local DARK_TRANSFORMATION_ID = addon.SPELLS.DARK_TRANSFORMATION.id
-local DARK_TRANSFORMATION_DURATION = 30
+local DARK_TRANSFORMATION_DURATION = 15
+local DARK_TRANSFORMATION_EXTENSION = 1
+local PILLAR_OF_FROST_ID = addon.SPELLS.PILLAR_OF_FROST.id
+local PILLAR_OF_FROST_DURATION = 12
+local KILLING_MACHINE_ID = addon.SPELLS.KILLING_MACHINE.id
+local KILLING_MACHINE_AURA_ID = 51124
+local KILLING_MACHINE_DURATION = 10
+local RIME_ID = addon.SPELLS.RIME.id
+local RIME_DURATION = 15
 local COST_POLL_INTERVAL = 0.10
 local GARGOYLE_TEXTURE = "Interface\\Icons\\Ability_DeathKnight_SummonGargoyle"
+local LCG = LibStub("LibCustomGlow-1.0")
 
 local RP_SPENDERS = {
     [47541] = true, [1242174] = true, [207317] = true, [383269] = true,
@@ -19,26 +28,50 @@ local function TrackerDefaults(showDamage)
         timelineScale = 64, timelineOrientation = "horizontal", iconSize = 64, fontSize = 18,
         showSpellName = true, showDamage = showDamage and true or false,
         timelineLocked = false, iconLocked = false,
-        timelinePosition = nil, iconPosition = nil, bestPercent = 0,
+        timelinePosition = nil, iconPosition = nil, bestPercent = 0, bestDuration = 0, bestDamage = 0,
     }
+end
+
+local function KillingMachineDefaults()
+    local defaults = TrackerDefaults(false)
+    defaults.timelineEnabled = false
+    defaults.iconEnabled = true
+    defaults.glowTarget = "icon"
+    defaults.glowType = "pixel"
+    defaults.color = { r = 0.30, g = 0.85, b = 1.00 }
+    defaults.speed = 0.25
+    defaults.lines = 8
+    defaults.thickness = 2
+    defaults.alpha = 1
+    return defaults
 end
 
 addon.DEFAULT_DB.burstTrackers = {
     gargoyle = TrackerDefaults(true),
     darkTransformation = TrackerDefaults(false),
+    pillarOfFrost = TrackerDefaults(false),
+    killingMachine = KillingMachineDefaults(),
+    rime = KillingMachineDefaults(),
 }
 
 local INFO = {
     gargoyle = { spellID = GARGOYLE_SPELL_ID, texture = GARGOYLE_TEXTURE, name = "Gargoyle", duration = GARGOYLE_DURATION, fallbackX = -170 },
     darkTransformation = { spellID = DARK_TRANSFORMATION_ID, name = "Dark Transformation", duration = DARK_TRANSFORMATION_DURATION, fallbackX = 170 },
+    pillarOfFrost = { spellID = PILLAR_OF_FROST_ID, name = "Pillar of Frost", duration = PILLAR_OF_FROST_DURATION, fallbackX = 0 },
+    killingMachine = { spellID = KILLING_MACHINE_ID, texture = "Interface\\Icons\\INV_Sword_122", name = "Killing Machine", duration = KILLING_MACHINE_DURATION, fallbackX = 0 },
+    rime = { spellID = RIME_ID, name = "Rime", duration = RIME_DURATION, fallbackX = 100 },
 }
 
 local frames = {}
 local states = {
     gargoyle = { active = false, endsAt = 0, rpSpent = 0, run = 0 },
-    darkTransformation = { active = false, endsAt = 0, run = 0 },
+    darkTransformation = { active = false, startedAt = 0, endsAt = 0, extensions = 0, run = 0 },
+    pillarOfFrost = { active = false, startedAt = 0, endsAt = 0, auraPollElapsed = 0, run = 0 },
+    killingMachine = { active = false, startedAt = 0, endsAt = 0, stacks = 0, run = 0 },
+    rime = { active = false, startedAt = 0, endsAt = 0, stacks = 0, run = 0 },
 }
 local cachedCosts, costElapsed, testKeys = {}, 0, {}
+local frostProcCDMFrames = { killingMachine = {}, rime = {} }
 
 local function CopyDefaults(target, defaults)
     for key, value in pairs(defaults) do
@@ -67,6 +100,12 @@ local function EnsureSettingsSchema()
     else
         CopyDefaults(old.gargoyle, addon.DEFAULT_DB.burstTrackers.gargoyle)
         CopyDefaults(old.darkTransformation, addon.DEFAULT_DB.burstTrackers.darkTransformation)
+        if type(old.pillarOfFrost) ~= "table" then old.pillarOfFrost = CopyTable(addon.DEFAULT_DB.burstTrackers.pillarOfFrost) end
+        CopyDefaults(old.pillarOfFrost, addon.DEFAULT_DB.burstTrackers.pillarOfFrost)
+        if type(old.killingMachine) ~= "table" then old.killingMachine = CopyTable(addon.DEFAULT_DB.burstTrackers.killingMachine) end
+        CopyDefaults(old.killingMachine, addon.DEFAULT_DB.burstTrackers.killingMachine)
+        if type(old.rime) ~= "table" then old.rime = CopyTable(addon.DEFAULT_DB.burstTrackers.rime) end
+        CopyDefaults(old.rime, addon.DEFAULT_DB.burstTrackers.rime)
     end
     return DKAssistDB.burstTrackers
 end
@@ -157,20 +196,26 @@ local function ApplyAppearance(key)
     display.timeline.bar:ClearAllPoints()
     display.timeline.detail:ClearAllPoints()
     if vertical then
-        display.timeline:SetSize(math.floor(126 * scale + 0.5), math.floor(340 * scale + 0.5))
+        local frameWidth = 84
+        local frameHeight = 200
+        display.timeline:SetSize(math.floor(frameWidth * scale + 0.5), math.floor(frameHeight * scale + 0.5))
+        iconSide = math.floor(42 * scale + 0.5)
         display.timeline.icon:SetSize(iconSide, iconSide)
-        display.timeline.icon:SetPoint("TOP", display.timeline, "TOP", 0, -25 * scale)
+        display.timeline.icon:SetPoint("TOP", display.timeline, "TOP", 0, -6 * scale)
         display.timeline.bar:SetOrientation("VERTICAL")
         display.timeline.bar:SetWidth(math.max(8, math.floor(10 * scale + 0.5)))
         display.timeline.bar:SetPoint("TOP", display.timeline.icon, "BOTTOM", 0, -10 * scale)
-        display.timeline.bar:SetPoint("BOTTOM", display.timeline, "BOTTOM", 0, 25 * scale)
+        display.timeline.bar:SetPoint("BOTTOM", display.timeline, "BOTTOM", 0, 8 * scale)
         display.timeline.detail:SetPoint("BOTTOM", display.timeline, "BOTTOM", 0, 4 * scale)
         display.timeline.detail:SetWidth(math.floor(118 * scale + 0.5))
         display.timeline.detail:SetJustifyH("CENTER")
     else
-        display.timeline:SetSize(math.floor(360 * scale + 0.5), math.floor(70 * scale + 0.5))
+        local frameWidth = 260
+        local frameHeight = 54
+        display.timeline:SetSize(math.floor(frameWidth * scale + 0.5), math.floor(frameHeight * scale + 0.5))
+        iconSide = math.floor(40 * scale + 0.5)
         display.timeline.icon:SetSize(iconSide, iconSide)
-        display.timeline.icon:SetPoint("LEFT", display.timeline, "LEFT", 12 * scale, -6 * scale)
+        display.timeline.icon:SetPoint("LEFT", display.timeline, "LEFT", 7 * scale, 0)
         display.timeline.bar:SetOrientation("HORIZONTAL")
         display.timeline.bar:SetHeight(math.max(8, math.floor(8 * scale + 0.5)))
         display.timeline.bar:SetPoint("LEFT", display.timeline.icon, "RIGHT", 10 * scale, 0)
@@ -182,7 +227,7 @@ local function ApplyAppearance(key)
     display.timeline.timer:SetFont(STANDARD_TEXT_FONT, settings.fontSize or 18, "OUTLINE")
     display.timeline.nameText:SetFont(STANDARD_TEXT_FONT, math.max(10, (settings.fontSize or 18) - 4), "OUTLINE")
     display.timeline.detail:SetFont(STANDARD_TEXT_FONT, math.max(9, (settings.fontSize or 18) - 6), "OUTLINE")
-    display.timeline.nameText:SetShown(settings.showSpellName ~= false); display.timeline.unlock:SetShown(not settings.timelineLocked)
+    display.timeline.nameText:Hide(); display.timeline.unlock:SetShown(not settings.timelineLocked)
     display.timeline:EnableMouse(not settings.timelineLocked)
     local iconSize = settings.iconSize or 64
     display.icon:SetSize(iconSize, iconSize); display.icon.timer:SetFont(STANDARD_TEXT_FONT, settings.fontSize or 18, "OUTLINE")
@@ -203,38 +248,129 @@ local function PollCosts()
 end
 
 local function ReadDarkTransformationExpiration()
+    -- Dark Transformation is an aura on the permanent ghoul, not the player.
+    -- Reading the player aura always fails and leaves the tracker at a static
+    -- fallback duration.  Prefer the pet aura when Blizzard exposes it.
+    if AuraUtil and AuraUtil.FindAuraBySpellID then
+        local ok, _, _, _, _, _, expirationTime = pcall(AuraUtil.FindAuraBySpellID, DARK_TRANSFORMATION_ID, "pet", "HELPFUL")
+        if ok and tonumber(expirationTime) then return tonumber(expirationTime) end
+    end
+end
+
+local function ReadPillarOfFrostExpiration()
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, DARK_TRANSFORMATION_ID)
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, PILLAR_OF_FROST_ID)
         if ok and aura and tonumber(aura.expirationTime) then return tonumber(aura.expirationTime) end
     end
     if AuraUtil and AuraUtil.FindAuraBySpellID then
-        local ok, _, _, _, _, _, expirationTime = pcall(AuraUtil.FindAuraBySpellID, DARK_TRANSFORMATION_ID, "player", "HELPFUL")
+        local ok, _, _, _, _, _, expirationTime = pcall(AuraUtil.FindAuraBySpellID, PILLAR_OF_FROST_ID, "player", "HELPFUL")
         if ok and tonumber(expirationTime) then return tonumber(expirationTime) end
+    end
+end
+
+local function ReadPlayerAura(spellID)
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+        if ok and aura then return aura end
     end
 end
 
 local function SetDisplaysShown(key, shown)
     local display, settings = EnsureFrames(key), Settings(key)
-    display.timeline:SetShown(shown and settings.timelineEnabled); display.icon:SetShown(shown and settings.iconEnabled)
+    if key == "killingMachine" or key == "rime" then
+        display.timeline:Hide()
+        display.icon:SetShown(shown and settings.glowTarget ~= "cdm")
+    else
+        display.timeline:SetShown(shown and settings.timelineEnabled)
+        display.icon:SetShown(shown and settings.iconEnabled)
+    end
+end
+
+local function StopProcGlow(key)
+    local display = frames[key]
+    local function stop(frame)
+        for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
+            if glowType.stop then pcall(glowType.stop, frame) end
+        end
+        if LCG and LCG.PixelGlow_Stop then pcall(LCG.PixelGlow_Stop, frame, "DKAssistFrostProc") end
+    end
+    if display then stop(display.icon) end
+    for frame in pairs(frostProcCDMFrames[key] or {}) do
+        if frame then stop(frame) end
+    end
+end
+
+local function RefreshProcGlow(key)
+    if key ~= "killingMachine" and key ~= "rime" then return end
+    StopProcGlow(key)
+    if not states[key].active then return end
+    local settings = Settings(key)
+    local glowType = addon:GetGlowTypeByID(settings.glowType or "pixel")
+    if not glowType or not glowType.start then return end
+    local opts = {
+        color = settings.color or { r = 0.30, g = 0.85, b = 1.00 },
+        alpha = settings.alpha or 1,
+        lines = settings.lines or 8,
+        speed = settings.speed or 0.25,
+        thickness = settings.thickness or 2,
+    }
+    local function start(frame) pcall(glowType.start, frame, opts) end
+    local targetFrames = settings.glowTarget == "cdm" and frostProcCDMFrames[key] or nil
+    if targetFrames then
+        for frame in pairs(targetFrames) do
+            if frame and frame.IsVisible and frame:IsVisible() then
+                start(frame)
+            end
+        end
+    else
+        local display = EnsureFrames(key)
+        start(display.icon)
+    end
+end
+
+function addon:RegisterCDMFrostProcFrame(frame, key)
+    if not frostProcCDMFrames[key] or not frame then return end
+    frostProcCDMFrames[key][frame] = true
+    RefreshProcGlow(key)
 end
 
 local function StartTracker(key, mock)
     local settings = Settings(key)
-    if not mock and not settings.timelineEnabled and not settings.iconEnabled then return end
+    local procOnly = key == "killingMachine" or key == "rime"
+    if not procOnly and not mock and not settings.timelineEnabled and not settings.iconEnabled then return end
     ApplyAppearance(key)
     local state, info = states[key], INFO[key]
-    state.active = true; state.run = state.run + 1; state.endsAt = GetTime() + info.duration
+    local now = GetTime()
+    state.active = true; state.run = state.run + 1; state.startedAt = now; state.endsAt = now + info.duration
+    if key == "darkTransformation" then state.extensions = 0 end
+    if key == "pillarOfFrost" then state.auraPollElapsed = 0 end
+    if key == "killingMachine" or key == "rime" then state.stacks = mock and 1 or 0 end
     if key == "gargoyle" then state.rpSpent = mock and 65 or 0; PollCosts() end
     if key == "darkTransformation" and not mock then
         C_Timer.After(0.10, function()
             local expiration = ReadDarkTransformationExpiration(); if expiration and state.active then state.endsAt = expiration end
         end)
+    elseif key == "pillarOfFrost" and not mock then
+        C_Timer.After(0.10, function()
+            local expiration = ReadPillarOfFrostExpiration()
+            if expiration and state.active then
+                state.endsAt = math.max(state.endsAt, expiration)
+            end
+        end)
+    elseif (key == "killingMachine" or key == "rime") and not mock then
+        local aura = ReadPlayerAura(info.spellID)
+        if aura then
+            state.endsAt = tonumber(aura.expirationTime) or state.endsAt
+            state.stacks = tonumber(aura.applications) or 1
+        end
     end
     SetDisplaysShown(key, true)
+    RefreshProcGlow(key)
 end
 
 local function StopTracker(key)
-    states[key].active = false; states[key].endsAt = 0; SetDisplaysShown(key, false)
+    StopProcGlow(key)
+    states[key].active = false; states[key].startedAt = 0; states[key].endsAt = 0; SetDisplaysShown(key, false)
 end
 
 local function SetTimerColor(display, fraction)
@@ -247,34 +383,62 @@ local function FinishGargoyle()
     local state, settings, display = states.gargoyle, Settings("gargoyle"), EnsureFrames("gargoyle")
     local finishedRun, finalPercent = state.run, state.rpSpent
     state.active = false; settings.bestPercent = math.max(settings.bestPercent or 0, finalPercent)
-    display.timeline.timer:SetText(""); display.icon.timer:SetText("")
-    display.timeline.detail:SetText(string.format("Final: +%d%%   Best: +%d%%", finalPercent, settings.bestPercent)); display.timeline.detail:Show()
-    C_Timer.After(3, function() if not state.active and state.run == finishedRun then SetDisplaysShown("gargoyle", false) end end)
+    display.timeline.detail:Hide()
+    SetDisplaysShown("gargoyle", false)
+end
+
+local function FinishDurationTracker(key)
+    local state = states[key]
+    local settings, display = Settings(key), EnsureFrames(key)
+    local finishedRun = state.run
+    local finalDuration = math.max(INFO[key].duration, state.endsAt - state.startedAt)
+    settings.bestDuration = math.max(settings.bestDuration or 0, finalDuration)
+    state.active = false
+    display.timeline.detail:Hide()
+    SetDisplaysShown(key, false)
 end
 
 local function UpdateTracker(key)
     local state = states[key]; if not state.active then return end
     local display, info, settings = EnsureFrames(key), INFO[key], Settings(key)
     local remaining = state.endsAt - GetTime()
-    if remaining <= 0 then if key == "gargoyle" then FinishGargoyle() else StopTracker(key) end; return end
+    local elapsed = GetTime() - state.startedAt
+    if remaining <= 0 then
+        if key == "gargoyle" then FinishGargoyle()
+        elseif key == "killingMachine" or key == "rime" then StopTracker(key)
+        else FinishDurationTracker(key) end
+        return
+    end
     local text = string.format("%.1f", remaining)
-    display.timeline.timer:SetText(text); display.icon.timer:SetText(text); display.timeline.bar:SetValue(math.min(info.duration, remaining))
+    display.timeline.timer:SetText(text); display.icon.timer:SetText(text)
+    display.timeline.bar:SetMinMaxValues(0, info.duration)
+    display.timeline.bar:SetValue(math.min(info.duration, remaining))
     SetTimerColor(display, remaining / info.duration)
-    if key == "gargoyle" and settings.showDamage then
-        display.timeline.detail:SetText(string.format("+%d%% Gargoyle Damage", state.rpSpent)); display.timeline.detail:Show()
+    if key == "killingMachine" or key == "rime" then
+        display.timeline.detail:SetText(string.format("Proc active%s", state.stacks > 1 and (" x" .. state.stacks) or "")); display.timeline.detail:Show()
     else display.timeline.detail:Hide() end
 end
 
 local driver = CreateFrame("Frame")
 driver:SetScript("OnUpdate", function(_, elapsed)
     if states.gargoyle.active then costElapsed = costElapsed + elapsed; if costElapsed >= COST_POLL_INTERVAL then costElapsed = 0; PollCosts() end end
-    UpdateTracker("gargoyle"); UpdateTracker("darkTransformation")
+    if states.pillarOfFrost.active then
+        local state = states.pillarOfFrost
+        state.auraPollElapsed = (state.auraPollElapsed or 0) + elapsed
+        if state.auraPollElapsed >= 0.10 then
+            state.auraPollElapsed = 0
+            local expiration = ReadPillarOfFrostExpiration()
+            if expiration then state.endsAt = math.max(state.endsAt, expiration) end
+        end
+    end
+    for key in pairs(INFO) do UpdateTracker(key) end
 end)
 
 function addon:RefreshBurstTrackers()
     for key in pairs(INFO) do
         ApplyAppearance(key)
         SetDisplaysShown(key, states[key].active or testKeys[key])
+        RefreshProcGlow(key)
     end
 end
 
@@ -287,7 +451,8 @@ function addon:TestBurstTrackers()
 end
 
 function addon:StopBurstTrackerTest()
-    wipe(testKeys); StopTracker("gargoyle"); StopTracker("darkTransformation")
+    wipe(testKeys)
+    for key in pairs(INFO) do StopTracker(key) end
 end
 
 function addon:ResetBurstTrackerPositions(key)
@@ -305,13 +470,48 @@ events:SetScript("OnEvent", function(_, event, unit, _, spellID)
     if event == "PLAYER_LOGIN" then
         EnsureSettingsSchema()
         addon:RefreshBurstTrackers()
-    elseif event == "UNIT_AURA" and unit == "player" and states.darkTransformation.active then
+    elseif event == "UNIT_AURA" and unit == "pet" and states.darkTransformation.active then
         local expiration = ReadDarkTransformationExpiration(); if expiration then states.darkTransformation.endsAt = expiration end
+    elseif event == "UNIT_AURA" and unit == "player" then
+        if states.pillarOfFrost.active then
+            local expiration = ReadPillarOfFrostExpiration()
+            if expiration then
+                local state = states.pillarOfFrost
+                state.endsAt = math.max(state.endsAt, expiration)
+            end
+        end
+        local killingAura = ReadPlayerAura(KILLING_MACHINE_ID) or ReadPlayerAura(KILLING_MACHINE_AURA_ID)
+        if killingAura then
+            if not states.killingMachine.active and addon:IsFrostSpec() then StartTracker("killingMachine", false) end
+            if states.killingMachine.active then
+                states.killingMachine.endsAt = tonumber(killingAura.expirationTime) or states.killingMachine.endsAt
+                states.killingMachine.stacks = tonumber(killingAura.applications) or 1
+            end
+        elseif states.killingMachine.active then StopTracker("killingMachine") end
+        local rimeAura = ReadPlayerAura(RIME_ID)
+        if rimeAura then
+            if not states.rime.active and addon:IsFrostSpec() then StartTracker("rime", false) end
+            if states.rime.active then
+                states.rime.endsAt = tonumber(rimeAura.expirationTime) or states.rime.endsAt
+                states.rime.stacks = tonumber(rimeAura.applications) or 1
+            end
+        elseif states.rime.active then StopTracker("rime") end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
         if spellID == GARGOYLE_SPELL_ID and IsPlayerSpell(GARGOYLE_TALENT_ID) then StartTracker("gargoyle", false)
         elseif spellID == DARK_TRANSFORMATION_ID then StartTracker("darkTransformation", false)
-        elseif states.gargoyle.active and RP_SPENDERS[spellID] then states.gargoyle.rpSpent = states.gargoyle.rpSpent + (cachedCosts[spellID] or 0) end
+        elseif spellID == PILLAR_OF_FROST_ID and addon:IsFrostSpec() then StartTracker("pillarOfFrost", false)
+        elseif RP_SPENDERS[spellID] then
+            if states.gargoyle.active then
+                states.gargoyle.rpSpent = states.gargoyle.rpSpent + (cachedCosts[spellID] or 0)
+            end
+            if states.darkTransformation.active and states.darkTransformation.endsAt > GetTime() then
+                states.darkTransformation.endsAt = states.darkTransformation.endsAt + DARK_TRANSFORMATION_EXTENSION
+                states.darkTransformation.extensions = states.darkTransformation.extensions + DARK_TRANSFORMATION_EXTENSION
+            end
+        end
     elseif event == "PLAYER_TALENT_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
         if not IsPlayerSpell(GARGOYLE_TALENT_ID) then StopTracker("gargoyle") end
+        if not addon:IsFrostSpec() then StopTracker("pillarOfFrost") end
+        if not addon:IsFrostSpec() then StopTracker("killingMachine"); StopTracker("rime") end
     end
 end)
