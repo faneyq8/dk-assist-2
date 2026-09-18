@@ -1,50 +1,64 @@
 # DK Assist 2
 
-A configurable quality-of-life addon for Unholy, Frost, and Blood Death Knights in World of Warcraft Retail / Midnight.
+Configurable combat alerts and trackers for **Unholy, Frost, and Blood Death Knights** in **World of Warcraft Retail / Midnight**. Open the settings with **/dka**.
 
-This is a community-maintained fork of **DK Assist** by ZachoWOW. It retains the original MIT license and attribution while adding 12.1 compatibility fixes and quality-of-life improvements.
+This community-maintained fork of **DK Assist** by ZachoWOW preserves the original MIT license and attribution.
 
-## Features
+## New in 2.1.0
 
-- **Blood Shield tracker** — a movable secret-safe absorb display for Blood Death Knights. The main bar visualizes current absorb strength, while a thin yellow bar tracks the real aura duration when available and falls back to a 10-second timer refreshed by each successful Death Strike.
-- **Redesigned standalone interface** — a cleaner sidebar groups warnings, trackers, and Sudden Doom buttons while keeping Blizzard's Settings → AddOns page unchanged.
-- **Compact Gargoyle tracker** — horizontal or vertical timeline and movable icon modes for the 25-second Summon Gargoyle window. The timeline uses a compact icon-and-timer layout.
-- **Compact Dark Transformation tracker** — horizontal or vertical timeline and movable icon modes, starting at 15 seconds and adding one second for every Death Coil or Epidemic cast while active.
-- **Pillar of Frost tracker** — compact horizontal or vertical icon-and-timer display that follows the real Pillar of Frost aura, including duration extensions from The Long Winter.
-- **Killing Machine alert** — uses the official in-game icon, supports multi-stack proc refreshes, includes an Enable Icon option, and can glow either on a movable DK Assist icon or the Cooldown Manager.
-- **Rime alert** — movable icon or Cooldown Manager glow with an Enable Icon option that appears while Rime is active.
-- **Breath of Sindragosa tracker** — compact timeline and movable icon modes with a live elapsed timer.
-- **Bone Shield reminder** — separate five-second and missing-buff alerts, selectable sounds, optional Ossuary low-stack warning, and live Cooldown Manager detection.
-- **Custom Frost proc glows** — independently configure Killing Machine and Rime glow style, colour, presets, animation speed, opacity, particles, and thickness.
-- **Blightfall & Soul Reaper timeline** — timeline and icon modes, optional spell names, font and icon sizing, voice countdown, configurable glow effects, and horizontal or vertical orientation.
-- **Festering Scythe warning** — configurable action-bar or Cooldown Manager glow when Festering Strike changes to Festering Scythe; includes expiry timing, combat-start reminder, and optional Lesser Ghoul reminder.
-- **Festering Scythe WA-Style alert** — a separate movable text alert with its own timing, font, outline, size, colour presets, live preview, green/yellow/red countdown, an optional EXPIRED state, and an optional Lesser Ghoul missing message.
-- **Sudden Doom glows** — separate, configurable alerts for Death Coil and Epidemic when Sudden Doom procs. Necrotic Coil and Graveyard are also supported where applicable.
-- **Sudden Doom WA-Style alert** — a separate movable and fully configurable text alert for Sudden Doom procs.
-- **Putrefy hold warning** — configurable red cross or glow that tells you to hold Putrefy while Dark Transformation is unavailable. The warning hides during Dark Transformation and its Death Coil / Epidemic duration extensions.
-- **Runic Power cap warning** — glow your Runic Power bar at a configurable threshold to prevent overcapping; supports Blizzard and compatible UI bars.
-- **Death and Decay tracker** — tracks the active Death and Decay window with optional movable display controls.
-- **Soul Reaper control** — choose Blizzard's normal execute glow or suppress it entirely.
-- **Four glow styles** — Pixel Glow, Autocast Shine, Button Glow, and Proc Border, with independent colours, presets, animation settings, thickness/particles, and opacity where relevant.
-- **Action Bar or Cooldown Manager** — choose the target for Festering Scythe, Sudden Doom, Putrefy, Killing Machine, and Rime warnings; includes Rescan Bars and Test tools.
-- **Selectable standalone themes** — Classic plus Carbon Cyan, Graphite Red, Obsidian Lime, Frosted Blue, Slate Orange, and Unholy Green. Themes restyle the standalone window without changing Blizzard's AddOns settings page.
-- **Modern settings controls** — themed dropdowns, sliders, value fields, and buttons in the standalone window, with live previews and Esc-to-close support.
-- **Convenient access** — minimap button, addon compartment entry, HidingBar / DataBroker support, and the `/dka` command.
+- **Killing Machine and Rime text alerts:** optional, independent, movable text alerts with custom text, font, outline, size, and colour controls, similar to Sudden Doom.
+- **Optional timers below the text:** enable **Show timer below text** separately for each Frost proc alert.
+- **Choose your display:** use Frost text alerts alongside the existing icon or Cooldown Manager glow, or use text on its own.
+- The new text alerts and their timers are **disabled by default**. Existing saved settings are preserved.
 
-## Installation
+## Improvements and fixes in 2.1.0
+
+- Reorganized Frost settings into **Warnings** and **Trackers**, following the Unholy layout, with each proc's icon and text settings grouped together.
+- Fixed the Soul Reaper / Blightfall icon moving outside the horizontal timeline near the end of the countdown and hiding its ready glow.
+- Enabling the Soul Reaper / Blightfall timeline or optional icon during an active countdown now shows that display immediately.
+- The Soul Reaper / Blightfall **Test** now displays the ready glow for two seconds before advancing to the next step.
+- Improved expiry cleanup so timeline and icon displays hide together and do not reappear when expired settings are refreshed.
+
+## Frost features
+
+- **Killing Machine and Rime:** independent icon toggles, movable icons or Cooldown Manager glows, optional text alerts, and optional countdowns below the text. Killing Machine supports consecutive proc stacks.
+- **Pillar of Frost:** compact horizontal or vertical timeline and movable icon modes, following the aura duration and extensions from The Long Winter.
+- **Breath of Sindragosa:** timeline and movable icon modes with an elapsed-time display.
+- **Custom proc glows:** separate style, colour, presets, animation speed, opacity, and particle or thickness controls where supported.
+
+## Unholy features
+
+- **Festering Scythe:** action-bar or Cooldown Manager warnings, expiry timing, combat-start reminder, and an optional Lesser Ghoul reminder.
+- **Festering Scythe WA-style text:** a movable alert with custom timing, font, outline, size, colour presets, live preview, coloured countdown, optional EXPIRED state, and optional LESSER GHOUL MISSING message.
+- **Sudden Doom:** separate configurable Death Coil and Epidemic glows, with Necrotic Coil and Graveyard support where applicable, plus an independent movable text alert.
+- **Putrefy hold warning:** a configurable red cross or glow that hides during Dark Transformation and its duration extensions.
+- **Summon Gargoyle:** compact horizontal or vertical timeline and movable icon modes for its 25-second window.
+- **Dark Transformation:** compact timeline and icon modes with duration extensions from Death Coil and Epidemic casts.
+- **Blightfall & Soul Reaper:** horizontal or vertical timeline, optional movable icon, spell-name and size controls, voice countdown, and configurable ready glow. This reminder is for **Unholy San'layn**: Dark Transformation starts the Soul Reaper countdown; casting Soul Reaper starts the Blightfall countdown.
+
+## Blood features
+
+- **Blood Shield tracker:** a movable absorb display with a separate thin yellow duration bar. The duration follows the aura when available, with a 10-second fallback refreshed by a successful Death Strike. Includes display, icon, colour, size, position-lock, and reset controls.
+- **Bone Shield reminder:** separate five-second and missing-buff alerts, selectable sounds with previews, an optional Ossuary low-stack warning, and Cooldown Manager detection.
+- **Death and Decay / Cleaving:** active-window tracking and Cleaving status reminders with optional display and glow controls.
+
+## Customization and access
+
+- **Four glow styles:** Pixel Glow, Autocast Shine, Button Glow, and Proc Border, with appearance controls where supported.
+- **Runic Power cap warning:** configurable threshold and compatible resource-bar glow targets.
+- **Standalone settings:** grouped navigation, live previews, themed controls, and Esc-to-close support, alongside Blizzard's Settings > AddOns page.
+- **Seven themes:** Classic, Carbon Cyan, Graphite Red, Obsidian Lime, Frosted Blue, Slate Orange, and Unholy Green.
+- **Convenient access:** minimap button, addon compartment entry, HidingBar / DataBroker support, Rescan Bars, Test tools, and **/dka**.
+
+## Installation and setup
 
 1. Download the latest release ZIP.
-2. Extract the `DKAssist` folder into `World of Warcraft/_retail_/Interface/AddOns/`.
-3. Restart World of Warcraft or run `/reload`.
-
-Open settings with `/dka`, or left-click the minimap icon.
+2. Extract the **DKAssist** folder into `World of Warcraft/_retail_/Interface/AddOns/`.
+3. Restart WoW or run **/reload**.
+4. Open **/dka**. To use the new Frost text alerts, enable the corresponding **Text Alert** and optionally **Show timer below text**. Use Test and the position-lock controls to arrange your displays.
 
 ## Credits and license
 
-Original project: [DK Assist (Death Knight QoL)](https://www.curseforge.com/wow/addons/dk-assist-death-knight-qol) by ZachoWOW.
+Original project: [DK Assist (Death Knight QoL)](https://www.curseforge.com/wow/addons/dk-assist-death-knight-qol) by **ZachoWOW**. Special thanks to **Zachoe** for the original DKQoL / WA-style alert concept, testing, and feedback that helped shape the Festering Scythe and Sudden Doom text alerts.
 
-Special thanks to **Zachoe** for the original DKQoL / WA-Style alert concept, testing, and detailed feedback that helped shape the Festering Scythe and Sudden Doom text alerts in version 1.6.3.
-
-Maintained by **FaneyQ8**.
-
-This fork is distributed under the [MIT License](LICENSE). Original copyright notices and license terms are preserved.
+Maintained by **FaneyQ8**. Distributed under the [MIT License](https://github.com/faneyq8/dk-assist-2/blob/main/LICENSE). Original copyright notices and license terms are preserved.
