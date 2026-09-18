@@ -11,6 +11,9 @@ local SUDDEN_DOOM_BUFF_ID = 81340
 -- CDM exposes the tracked Sudden Doom icon using its parent/passive spell ID,
 -- while the live proc aura uses 81340.
 local SUDDEN_DOOM_CDM_ID = 49530
+local KILLING_MACHINE_IDS = { [51124] = true, [51128] = true }
+local RIME_IDS = { [59052] = true, [59057] = true }
+local BREATH_OF_SINDRAGOSA_ID = 1249658
 local LESSER_GHOUL_SPELL_ID = 1254252
 local DEATH_AND_DECAY_SPELL_ID = 43265
 local DEATH_AND_DECAY_BUFF_ID = 188290
@@ -70,10 +73,23 @@ local function BloodBoneEnabled()
     return DKAssistDB and DKAssistDB.bloodBone and DKAssistDB.bloodBone.enabled
 end
 
+local function FrostProcCDMEnabled(key)
+    local settings = DKAssistDB and DKAssistDB.burstTrackers and DKAssistDB.burstTrackers[key]
+    -- The tracked-buff frame is also the reliable proc-state source for the
+    -- movable icon. Register it regardless of the selected visual target.
+    return settings ~= nil
+end
+
+local function BreathTrackerEnabled()
+    local settings = DKAssistDB and DKAssistDB.breathTracker
+    return settings and (settings.timelineEnabled or settings.iconEnabled) or false
+end
+
 local function RegisterItem(item)
     if not DKAssistDB or (not DKAssistDB.trackCDMPutrefy and not DKAssistDB.trackCDMFestering
         and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not AnyBloodDnDEnabled()
-        and not BloodBoneEnabled()) then return end
+        and not BloodBoneEnabled() and not FrostProcCDMEnabled("killingMachine")
+        and not FrostProcCDMEnabled("rime") and not BreathTrackerEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
@@ -93,6 +109,14 @@ local function RegisterItem(item)
                 and "bloodDndBuff" or "bloodDndAbility"
         elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
             return "bloodBoneAbility"
+        elseif addon:IsFrostSpec() and FrostProcCDMEnabled("killingMachine")
+            and KILLING_MACHINE_IDS[spellID] then
+            return "killingMachine"
+        elseif addon:IsFrostSpec() and FrostProcCDMEnabled("rime") and RIME_IDS[spellID] then
+            return "rime"
+        elseif addon:IsFrostSpec() and BreathTrackerEnabled() and IsBuffViewerItem(item)
+            and spellID == BREATH_OF_SINDRAGOSA_ID then
+            return "breath"
         end
     end)
     if not ok then return end
@@ -113,6 +137,10 @@ local function RegisterItem(item)
         addon:ClearCDMDnDMissingFrame(item)
     elseif kind == "bloodBoneAbility" then
         addon:RegisterCDMBloodBoneAbilityFrame(item)
+    elseif kind == "killingMachine" or kind == "rime" then
+        addon:RegisterCDMFrostProcFrame(item, kind)
+    elseif kind == "breath" then
+        addon:RegisterCDMBreathFrame(item)
     end
 end
 
@@ -143,6 +171,11 @@ local function RegisterEllesmereItem(item, euiCDM)
                 and "bloodDndBuff" or "bloodDndAbility"
         elseif BloodBoneEnabled() and (spellID == MARROWREND_SPELL_ID or spellID == DEATHS_CARESS_SPELL_ID) then
             return "bloodBoneAbility"
+        elseif addon:IsFrostSpec() and FrostProcCDMEnabled("killingMachine")
+            and KILLING_MACHINE_IDS[spellID] then
+            return "killingMachine"
+        elseif addon:IsFrostSpec() and FrostProcCDMEnabled("rime") and RIME_IDS[spellID] then
+            return "rime"
         end
     end)
     if not ok then return end
@@ -163,6 +196,8 @@ local function RegisterEllesmereItem(item, euiCDM)
         addon:ClearCDMDnDMissingFrame(item)
     elseif kind == "bloodBoneAbility" then
         addon:RegisterCDMBloodBoneAbilityFrame(item)
+    elseif kind == "killingMachine" or kind == "rime" then
+        addon:RegisterCDMFrostProcFrame(item, kind)
     end
 end
 

@@ -19,6 +19,21 @@ addon.SPELLS = {
         name = "Dark Transformation",
         key  = nil,
     },
+    PILLAR_OF_FROST = {
+        id   = 51271,
+        name = "Pillar of Frost",
+        key  = nil,
+    },
+    KILLING_MACHINE = {
+        id   = 51124,
+        name = "Killing Machine",
+        key  = nil,
+    },
+    RIME = {
+        id   = 59052,
+        name = "Rime",
+        key  = nil,
+    },
     PUTREFY = {
         id   = 1247378,
         name = "Putrefy",
@@ -38,6 +53,11 @@ addon.SPELLS = {
     BONE_SHIELD = {
         id   = 195181,
         name = "Bone Shield",
+        key  = nil,
+    },
+    BLOOD_SHIELD = {
+        id   = 77535,
+        name = "Blood Shield",
         key  = nil,
     },
     MARROWREND = {
@@ -280,6 +300,14 @@ addon.DEFAULT_DB = {
     },
     bloodBone = {
         enabled   = false,
+        warningAfter = 25,
+        textAlert = true,
+        soundAlert = true,
+        earlyWarning = true,
+        missingWarning = true,
+        ossuaryWarning = false,
+        earlySound = "READY_CHECK",
+        missingSound = "RAID_WARNING",
         glowType  = "pixel",
         color     = {r = 0.85, g = 0.10, b = 0.10},
         alpha     = 1.0,
@@ -289,6 +317,16 @@ addon.DEFAULT_DB = {
         particles = 4,
         scale     = 1.0,
         border    = false,
+    },
+    bloodShield = {
+        enabled = false,
+        showIcon = true,
+        showDuration = true,
+        width = 260,
+        height = 36,
+        iconSize = 52,
+        locked = false,
+        color = { r = 0.90, g = 0.05, b = 0.20 },
     },
     soulReaper = {
         suppressMode = "off",  -- "off", "cooldown", "always"
@@ -317,6 +355,10 @@ addon.DEFAULT_DB.spells.festeringScythe.textAlert = DefaultTextAlert("FESTERING 
 addon.DEFAULT_DB.spells.deathCoil.textAlert = DefaultTextAlert("SUDDEN DOOM - DEATH COIL")
 addon.DEFAULT_DB.spells.epidemic.textAlert = DefaultTextAlert("SUDDEN DOOM - EPIDEMIC")
 addon.DEFAULT_DB.suddenDoomTextAlert = DefaultTextAlert("SUDDEN DOOM", { r = 0.00, g = 0.90, b = 0.20 })
+addon.DEFAULT_DB.killingMachineTextAlert = DefaultTextAlert("KILLING MACHINE", { r = 0.30, g = 0.85, b = 1.00 })
+addon.DEFAULT_DB.rimeTextAlert = DefaultTextAlert("RIME", { r = 0.30, g = 0.85, b = 1.00 })
+addon.DEFAULT_DB.killingMachineTextAlert.showTimer = false
+addon.DEFAULT_DB.rimeTextAlert.showTimer = false
 
 local REMOVED_TEXT_FONTS = {
     ["Fonts\\2002B.TTF"] = true,
@@ -332,13 +374,16 @@ end
 
 local textAlertFrames = {}
 local textAlertTimers = {}
+local frostTextTestEnds = {}
 local festeringTextTicker = nil
 local festeringTextEndTime = nil
 local festeringTextNormalWanted = false
 local festeringTextGhoulMissing = false
 
 local function GetTextAlertSettings(key)
-    if key == "suddenDoom" then return DKAssistDB and DKAssistDB.suddenDoomTextAlert end
+    if key == "suddenDoom" or key == "killingMachine" or key == "rime" then
+        return DKAssistDB and DKAssistDB[key .. "TextAlert"]
+    end
     return DKAssistDB and DKAssistDB.spells and DKAssistDB.spells[key] and DKAssistDB.spells[key].textAlert
 end
 
@@ -384,7 +429,7 @@ function addon:RefreshTextAlert(key)
     if settings.point then
         frame:SetPoint(settings.point[1], UIParent, settings.point[2], settings.point[3], settings.point[4])
     else
-        local offset = key == "festeringScythe" and 145 or 100
+        local offset = key == "festeringScythe" and 145 or (key == "rime" and 60 or 100)
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, offset)
     end
     frame.text:SetText(settings.text or "DK ASSIST")
@@ -409,7 +454,36 @@ function addon:RefreshTextAlert(key)
     local width = math.max(280, frame.text:GetStringWidth() + 32, frame.timerText:GetStringWidth() + 32)
     frame:SetSize(width, key == "festeringScythe" and (fontSize * 2 + 18) or (fontSize + 20))
     frame.timerText:SetShown(key == "festeringScythe" and frame.timerText:GetText() ~= "")
+    if key == "killingMachine" or key == "rime" then
+        frame.timerText:SetTextColor(c.r, c.g, c.b, 1)
+        frame._frostTimerShown = nil
+        addon:UpdateFrostTextAlertTimer(key)
+    end
     frame:SetShown(settings.enabled and frame._dkAssistWanted)
+end
+
+-- Called by the existing burst tracker driver, with no new aura scan or ticker.
+function addon:UpdateFrostTextAlertTimer(key, expiration)
+    if key ~= "killingMachine" and key ~= "rime" then return end
+    local frame, settings = textAlertFrames[key], GetTextAlertSettings(key)
+    if not frame or not settings then return end
+    if type(expiration) ~= "nil" then frame._frostExpiration = expiration end
+    local expires = frostTextTestEnds[key] or frame._frostExpiration
+    local readable = not (issecretvalue and issecretvalue(expires)) and type(expires) == "number"
+    local show = settings.enabled and settings.showTimer and frame._dkAssistWanted and readable
+    local remaining = show and math.max(0, expires - GetTime()) or 0
+    show = show and remaining > 0 or false
+    if frame._frostTimerShown ~= show then
+        frame._frostTimerShown = show
+        frame.timerText:SetShown(show)
+        local size = settings.fontSize or 28
+        frame:SetHeight(show and (size * 2 + 18) or (size + 20))
+    end
+    local text = show and string.format("%.1fs", remaining) or ""
+    if frame._frostTimerText ~= text then
+        frame._frostTimerText = text
+        frame.timerText:SetText(text)
+    end
 end
 
 local function StopFesteringTextTicker()
@@ -457,6 +531,10 @@ function addon:SetTextAlertVisible(key, visible)
     local settings = GetTextAlertSettings(key)
     if not settings then return end
     local frame = EnsureTextAlertFrame(key)
+    if not visible and (key == "killingMachine" or key == "rime") then
+        frostTextTestEnds[key] = nil
+        frame._frostExpiration = nil
+    end
     if key == "festeringScythe" then
         festeringTextNormalWanted = visible and true or false
         frame._dkAssistWanted = festeringTextNormalWanted or festeringTextGhoulMissing
@@ -493,6 +571,7 @@ function addon:TestTextAlert(key)
     if not settings then return end
     if textAlertTimers[key] then textAlertTimers[key]:Cancel() end
     if key == "festeringScythe" then festeringTextEndTime = GetTime() + 5 end
+    if key == "killingMachine" or key == "rime" then frostTextTestEnds[key] = GetTime() + 5 end
     addon:SetTextAlertVisible(key, true)
     textAlertTimers[key] = C_Timer.NewTimer(5, function()
         textAlertTimers[key] = nil
@@ -558,6 +637,10 @@ end
 
 function addon:IsBloodSpec()
     return self:GetActiveSpecID() == 250
+end
+
+function addon:IsFrostSpec()
+    return self:GetActiveSpecID() == 251
 end
 
 function addon:IsUnholySpec()
@@ -988,28 +1071,10 @@ function addon:StopBloodBoneReminder()
 end
 
 function addon:RefreshBloodBoneReminder(testing)
-    local settings = DKAssistDB and DKAssistDB.bloodBone
-    local boneShieldActive = false
-    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, addon.SPELLS.BONE_SHIELD.id)
-        boneShieldActive = ok and aura ~= nil
-    end
-    local active = testing or (settings and settings.enabled and addon:IsBloodSpec()
-        and InCombatLockdown() and not boneShieldActive)
-    for _, overlay in pairs(cdmBloodBoneOverlays) do
-        local target = overlay._targetFrame
-        if active and target and target:IsVisible() then
-            overlay:Show()
-            if not overlay._glowActive then
-                local glowType = addon:GetGlowTypeByID(settings.glowType)
-                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
-                    overlay._glowActive = true
-                end
-            end
-        else
-            StopBloodBoneOverlay(overlay)
-        end
-    end
+    -- Midnight protects CDM frame visibility. The replacement reminder in
+    -- BoneShieldReminder.lua never reads protected frame state.
+    for _, overlay in pairs(cdmBloodBoneOverlays) do StopBloodBoneOverlay(overlay) end
+    if addon.RefreshBoneShieldReminder then addon:RefreshBoneShieldReminder() end
 end
 
 function addon:TestBloodBoneReminder()
@@ -1884,6 +1949,7 @@ local DND_DURATION  = 10
 -- Unholy: Dark Transformation -> Soul Reaper -> Blightfall
 -- -------------------------------------------------------
 local BLIGHTFALL_GRACE = 5
+local BLIGHTFALL_TEST_READY = 2
 local blightFrame
 local blightIconFrame
 local blightState
@@ -1951,13 +2017,13 @@ end
 local function UpdateBlightfallIcon(self)
     if not blightState then StopBlightfallReadyGlow(self); self:Hide(); return end
     local raw = blightState.delay - (GetTime() - blightState.started)
-    if blightTest and raw <= 0 then
+    if blightTest and raw < -BLIGHTFALL_TEST_READY then
         local s = BlightfallSettings()
         local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
         local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
         blightState = { step = nextStep, delay = delay, started = GetTime() }
         blightLastCue = nil
-        return
+        raw = delay
     elseif raw < -BLIGHTFALL_GRACE then
         blightState = nil
         StopBlightfallReadyGlow(self)
@@ -2078,19 +2144,20 @@ local function CreateBlightfallFrame()
         if s then s.position = { point, relPoint, x, y } end
     end)
     f:SetScript("OnUpdate", function(self)
-        if not blightState then return end
+        if not blightState then StopBlightfallReadyGlow(self.marker.glowTarget); self:Hide(); return end
         local raw = blightState.delay - (GetTime() - blightState.started)
-        if blightTest and raw <= 0 then
+        if blightTest and raw < -BLIGHTFALL_TEST_READY then
             local s = BlightfallSettings()
             local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
             local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
             blightState = { step = nextStep, delay = delay, started = GetTime() }
             blightLastCue = nil
-            return
+            raw = delay
         elseif raw < -BLIGHTFALL_GRACE then
             blightState = nil
             StopBlightfallReadyGlow(self.marker.glowTarget)
             self:Hide()
+            if blightIconFrame then StopBlightfallReadyGlow(blightIconFrame); blightIconFrame:Hide() end
             return
         end
         local eta = math.max(0, raw)
@@ -2109,8 +2176,12 @@ local function CreateBlightfallFrame()
             local y = 34 + ((self:GetHeight() - 144) * pct)
             self.marker:SetPoint("CENTER", self, "BOTTOM", 0, y)
         else
-            local x = 34 + ((self:GetWidth() - 144) * pct)
-            self.marker:SetPoint("CENTER", self, "LEFT", x, 0)
+            -- Align the icon's center, not the whole icon-and-label marker,
+            -- with the ready line. Keep the marker inside the clipped lane.
+            local iconCenterOffset = 4 + self.marker.icon:GetWidth() / 2
+            local startX = 34 - iconCenterOffset
+            local endX = math.max(startX, self:GetWidth() - self.marker:GetWidth() - 8)
+            self.marker:SetPoint("LEFT", self, "LEFT", startX + (endX - startX) * pct, 0)
         end
         if raw <= 0 then
             if not self.marker.glowTarget._glowActive then StartBlightfallReadyGlow(self.marker.glowTarget) end
@@ -2190,6 +2261,12 @@ local function ApplyBlightfallSettings()
     end
     if blightState then
         local raw = blightState.delay - (GetTime() - blightState.started)
+        if not blightTest and raw < -BLIGHTFALL_GRACE then blightState = nil end
+    end
+    if blightState then
+        f:SetShown(s.enabled or (blightTest and not s.iconEnabled))
+        iconFrame:SetShown(s.iconEnabled)
+        local raw = blightState.delay - (GetTime() - blightState.started)
         if raw <= 0 then
             if s.enabled then StartBlightfallReadyGlow(f.marker.glowTarget) end
             if s.iconEnabled then StartBlightfallReadyGlow(iconFrame) end
@@ -2198,8 +2275,10 @@ local function ApplyBlightfallSettings()
             StopBlightfallReadyGlow(iconFrame)
         end
     end
-    if not s.enabled then StopBlightfallReadyGlow(f.marker.glowTarget); f:Hide() end
-    if not s.iconEnabled then StopBlightfallReadyGlow(iconFrame); iconFrame:Hide() end
+    if not blightState or (not s.enabled and not (blightTest and not s.iconEnabled)) then
+        StopBlightfallReadyGlow(f.marker.glowTarget); f:Hide()
+    end
+    if not blightState or not s.iconEnabled then StopBlightfallReadyGlow(iconFrame); iconFrame:Hide() end
     if (not s.enabled and not s.iconEnabled and not blightTest)
         or (not blightTest and not addon:IsSanlaynHeroSpec()) then
         StopBlightfallReadyGlow(f.marker.glowTarget)
@@ -2762,6 +2841,9 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
             addon:OnDarkTransformationExtended()
         elseif spellID == addon.SPELLS.DEATH_AND_DECAY.id then
             addon:OnDeathAndDecayCast()
+        elseif spellID == addon.SPELLS.MARROWREND.id or spellID == addon.SPELLS.DEATHS_CARESS.id
+            or spellID == 108199 or spellID == 49028 or spellID == 439843 then
+            if addon.OnBoneShieldGeneratorCast then addon:OnBoneShieldGeneratorCast() end
         end
         addon:OnBlightfallChainSpellCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -2771,8 +2853,10 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         addon:StopSuddenDoomGlows()
         OnFesteringCombatEnd()
         addon:ShowPutrefyHoldWarning()
+        if addon.OnBoneShieldCombatEnd then addon:OnBoneShieldCombatEnd() end
     elseif event == "PLAYER_REGEN_DISABLED" then
         OnFesteringCombatStart()
+        if addon.OnBoneShieldCombatStart then addon:OnBoneShieldCombatStart() end
     end
 end)
 
@@ -2918,6 +3002,15 @@ initFrame:SetScript("OnEvent", function(_, event)
             end
         end
         NormalizeTextAlertFont(DKAssistDB.suddenDoomTextAlert)
+        for _, key in ipairs({ "killingMachineTextAlert", "rimeTextAlert" }) do
+            if not DKAssistDB[key] then DKAssistDB[key] = CopyTable(addon.DEFAULT_DB[key]) end
+            for field, value in pairs(addon.DEFAULT_DB[key]) do
+                if DKAssistDB[key][field] == nil then
+                    DKAssistDB[key][field] = type(value) == "table" and CopyTable(value) or value
+                end
+            end
+            NormalizeTextAlertFont(DKAssistDB[key])
+        end
         if DKAssistDB.runicPowerWarning == nil then DKAssistDB.runicPowerWarning = true end
         if not DKAssistDB.runicPower then
             DKAssistDB.runicPower = CopyTable(addon.DEFAULT_DB.runicPower)
@@ -2998,10 +3091,15 @@ initFrame:SetScript("OnEvent", function(_, event)
                 end
             end
         end
-        -- Bone Shield Reminder was removed from the Blood section.  Disable
-        -- previously saved copies as well so the hidden feature cannot keep
-        -- applying glows for users who enabled it in an earlier test build.
-        DKAssistDB.bloodBone.enabled = false
+        if not DKAssistDB.bloodShield then
+            DKAssistDB.bloodShield = CopyTable(addon.DEFAULT_DB.bloodShield)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.bloodShield) do
+                if DKAssistDB.bloodShield[k] == nil then
+                    DKAssistDB.bloodShield[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
         if DKAssistDB.configSpecView == nil then DKAssistDB.configSpecView = "auto" end
 
         -- Soul Reaper defaults

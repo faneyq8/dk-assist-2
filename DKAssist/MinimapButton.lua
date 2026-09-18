@@ -1,6 +1,6 @@
 local addonName, addon = ...
 
-local ICON_TEXTURE = "Interface\\AddOns\\DKAssist\\Media\\Icon.png"
+local ICON_TEXTURE = "Interface\\AddOns\\DKAssist\\Media\\Icon-2.0.1.png"
 
 local function OpenSettings()
     if addon.OpenStandaloneSettings then

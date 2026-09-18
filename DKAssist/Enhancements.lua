@@ -1,6 +1,6 @@
 local addonName, addon = ...
 
-local VERSION = "1.7.0"
+local VERSION = "2.0.1"
 local DARK_TRANSFORMATION = 1233448
 
 -- Patch 12.1 marks live cooldown, aura-stack and power values as secret.
@@ -73,12 +73,12 @@ function addon:ShowWhatsNew()
     popup:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 32, insets = {left = 11, right = 12, top = 12, bottom = 11} })
     local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -24)
-    title:SetText("|cff00dd55DK Assist 1.7.0|r — What's New")
+    title:SetText("|cff00dd55DK Assist 2.0.1|r — What's New")
     local text = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     text:SetPoint("TOPLEFT", 34, -62)
     text:SetWidth(320)
     text:SetJustifyH("LEFT")
-    text:SetText("• Added Blood Death and Decay / Cleaving tracker\n• Optional glow when the Cleaving buff is missing\n• Added Blightfall and Soul Reaper timeline and icon modes\n• Configurable countdown voice, timing, font size and glow\n• Improved layouts, live previews and Midnight 12.1 safety")
+    text:SetText("• Added a dedicated Frost settings section\n• Added a compact Pillar of Frost tracker\n• Added Killing Machine and Rime icon alerts\n• Added DK Assist icon or Cooldown Manager glow targets\n• Added complete Frost proc glow customization")
     local close = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
     close:SetSize(110, 24)
     close:SetPoint("BOTTOM", 0, 20)

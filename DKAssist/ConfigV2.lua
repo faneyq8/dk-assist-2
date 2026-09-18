@@ -11,6 +11,12 @@ local PAGE_ITEMS = {
     { text = "Blightfall & Soul Reaper", value = "blightfall" },
     { text = "Gargoyle Tracker", value = "gargoyle" },
     { text = "Dark Transformation Tracker", value = "darktransformation" },
+    { text = "Pillar of Frost Tracker", value = "pillaroffrost" },
+    { text = "Breath of Sindragosa", value = "breath" },
+    { text = "Killing Machine Alert", value = "killingmachine" },
+    { text = "Rime Alert", value = "rime" },
+    { text = "Killing Machine Text Alert", value = "killingmachinetext" },
+    { text = "Rime Text Alert", value = "rimetext" },
     { text = "Sudden Doom", value = "suddendoom" },
     { text = "Sudden Doom WA-Style", value = "suddendoomwa" },
     { text = "Death Coil (Sudden Doom)", value = "deathcoil" },
@@ -18,19 +24,28 @@ local PAGE_ITEMS = {
     { text = "Putrefy", value = "putrefy" },
     { text = "Runic Power", value = "runic" },
     { text = "Death and Decay", value = "dnd" },
+    { text = "Blood Shield Tracker", value = "bloodshield" },
 }
 
 local UNHOLY_PAGE_ITEMS = {}
 for _, item in ipairs(PAGE_ITEMS) do
-    -- The DnD stand-in/timeline tools are Blood-specific.  Keeping this page
-    -- out of the Unholy selector prevents one specialization's toggle from
-    -- appearing to enable the feature for the other.
-    if item.value ~= "dnd" then
+    -- Keep specialization-only pages out of the Unholy selector.
+    if item.value ~= "dnd" and item.value ~= "pillaroffrost" and item.value ~= "breath" and item.value ~= "killingmachine" and item.value ~= "rime" and item.value ~= "killingmachinetext" and item.value ~= "rimetext" then
         UNHOLY_PAGE_ITEMS[#UNHOLY_PAGE_ITEMS + 1] = item
     end
 end
 local BLOOD_PAGE_ITEMS = {
     { text = "Death and Decay", value = "dnd" },
+    { text = "Bone Shield Reminder", value = "bloodbone" },
+    { text = "Blood Shield Tracker", value = "bloodshield" },
+}
+local FROST_PAGE_ITEMS = {
+    { text = "Killing Machine Alert", value = "killingmachine" },
+    { text = "Killing Machine Text Alert", value = "killingmachinetext" },
+    { text = "Rime Alert", value = "rime" },
+    { text = "Rime Text Alert", value = "rimetext" },
+    { text = "Pillar of Frost Tracker", value = "pillaroffrost" },
+    { text = "Breath of Sindragosa", value = "breath" },
 }
 
 local PAGE_LABEL = {}
@@ -508,7 +523,7 @@ function addon:CreateConfigPanel(standalone)
 
     local title = CreateText(panel, "|cffcc0000DK Assist|r", 16, -14, "GameFontNormalLarge")
     local subtitle = CreateText(panel,
-        "Death Knight alerts - Unholy and Blood combat tools",
+        "Death Knight alerts - Unholy, Frost, and Blood combat tools",
         16, -36, "GameFontHighlightSmall", nil, { 0.67, 0.67, 0.67 })
     panel.dkassistTitle = title
     panel.dkassistSubtitle = subtitle
@@ -523,17 +538,23 @@ function addon:CreateConfigPanel(standalone)
 
     local function ActiveConfigSpec()
         local view = DKAssistDB.configSpecView or "auto"
-        if view == "blood" or view == "unholy" then return view end
-        return addon:IsBloodSpec() and "blood" or "unholy"
+        if view == "blood" or view == "frost" or view == "unholy" then return view end
+        if addon:IsBloodSpec() then return "blood" end
+        if addon:IsFrostSpec() then return "frost" end
+        return "unholy"
     end
 
     local function ConfigPageItems()
-        return ActiveConfigSpec() == "blood" and BLOOD_PAGE_ITEMS or UNHOLY_PAGE_ITEMS
+        local spec = ActiveConfigSpec()
+        if spec == "blood" then return BLOOD_PAGE_ITEMS end
+        if spec == "frost" then return FROST_PAGE_ITEMS end
+        return UNHOLY_PAGE_ITEMS
     end
 
     -- Auto follows the character's live specialization when the panel is
     -- first created instead of retaining the Unholy default page.
-    if ActiveConfigSpec() == "blood" then selectedKey = "dnd" end
+    if ActiveConfigSpec() == "blood" then selectedKey = "dnd"
+    elseif ActiveConfigSpec() == "frost" then selectedKey = "pillaroffrost" end
 
     if not StaticPopupDialogs.DKASSIST_V2_RELOAD_MINIMAP then
         StaticPopupDialogs.DKASSIST_V2_RELOAD_MINIMAP = {
@@ -584,10 +605,11 @@ function addon:CreateConfigPanel(standalone)
     specLabel:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -355, -18)
     local specDropdown = CreateDropdown(panel, 0, 0, 118,
         function()
-            local active = addon:IsBloodSpec() and "Blood" or "Unholy"
+            local active = addon:IsBloodSpec() and "Blood" or (addon:IsFrostSpec() and "Frost" or "Unholy")
             return {
                 { text = "Auto (" .. active .. ")", value = "auto" },
                 { text = "Unholy", value = "unholy" },
+                { text = "Frost", value = "frost" },
                 { text = "Blood", value = "blood" },
             }
         end,
@@ -595,7 +617,8 @@ function addon:CreateConfigPanel(standalone)
         function(value)
             DKAssistDB.configSpecView = value
             RebuildSidebar()
-            panel:ShowPage(ActiveConfigSpec() == "blood" and "dnd" or "festering")
+            local spec = ActiveConfigSpec()
+            panel:ShowPage(spec == "blood" and "dnd" or (spec == "frost" and "pillaroffrost" or "festering"))
         end)
     specDropdown:ClearAllPoints()
     specDropdown:SetPoint("LEFT", specLabel, "RIGHT", -6, 0)
@@ -1114,6 +1137,82 @@ function addon:CreateConfigPanel(standalone)
         pages[key] = page
     end
 
+    local function BuildProcTextControls(page, alertKey, defaultText)
+        local function textSettings() return DKAssistDB[alertKey .. "TextAlert"] end
+        page.textEnable = CreateCheck(page.textCard, "Enable Text Alert", 14, -76,
+            function() return textSettings().enabled end,
+            function(v)
+                textSettings().enabled = v
+                if alertKey ~= "suddenDoom" then addon:RefreshBurstTrackers() end
+                addon:RefreshTextAlert(alertKey)
+            end)
+        page.textValue = CreateEditControl(page.textCard, "Display Text:", 14, -112, 170,
+            function() return textSettings().text end,
+            function(v) textSettings().text = v; addon:RefreshTextAlert(alertKey); page.RefreshTextPreview() end)
+        page.textColor = CreateColorControl(page.textCard, 14, -148, "Text Color:",
+            function() return textSettings().color end, function() addon:RefreshTextAlert(alertKey); page.RefreshTextPreview() end)
+        CreatePresetRow(page.textCard, 14, -179, textSettings, function()
+            page.textColor.refresh()
+            addon:RefreshTextAlert(alertKey)
+            page.RefreshTextPreview()
+        end)
+        page.textLock = CreateCheck(page.textCard, "Lock position", 200, -76,
+            function() return textSettings().locked end, function(v) textSettings().locked = v end)
+        if alertKey == "killingMachine" or alertKey == "rime" then
+            page.textTimer = CreateCheck(page.textCard, "Show timer below text", 14, -218,
+                function() return textSettings().showTimer == true end,
+                function(v)
+                    textSettings().showTimer = v
+                    addon:RefreshTextAlert(alertKey)
+                    page.RefreshTextPreview()
+                end)
+        end
+        page.textSize = CreateSlider(page.textCard, "Font Size", 14, -256, 190, 12, 48, 1,
+            function() return textSettings().fontSize or 28 end,
+            function(v) textSettings().fontSize = v; addon:RefreshTextAlert(alertKey); page.RefreshTextPreview() end)
+        local fontLabel = CreateText(page.textCard, "Font:", 14, -312, "GameFontNormal")
+        page.textFont = CreateDropdown(page.textCard, 0, 0, 150,
+            function() return TEXT_FONTS end,
+            function() return textSettings().font or "Fonts\\FRIZQT__.TTF" end,
+            function(v) textSettings().font = v; addon:RefreshTextAlert(alertKey); page.RefreshTextPreview() end)
+        page.textFont:ClearAllPoints(); page.textFont:SetPoint("LEFT", fontLabel, "RIGHT", -8, -2)
+        local outlineLabel = CreateText(page.textCard, "Outline Style:", 14, -348, "GameFontNormal")
+        page.textOutline = CreateDropdown(page.textCard, 0, 0, 150,
+            function() return TEXT_OUTLINES end,
+            function() return textSettings().outline or "OUTLINE" end,
+            function(v) textSettings().outline = v; addon:RefreshTextAlert(alertKey); page.RefreshTextPreview() end)
+        page.textOutline:ClearAllPoints(); page.textOutline:SetPoint("LEFT", outlineLabel, "RIGHT", -8, -2)
+        page.textTest = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
+        page.textTest:SetSize(110, 24); page.textTest:SetPoint("TOPLEFT", page.textCard, "TOPLEFT", 14, AdjustedY(page.textCard, -382))
+        page.textTest:SetText("Test Text Alert")
+        page.textTest:SetScript("OnClick", function() addon:TestTextAlert(alertKey) end)
+        page.textReset = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
+        page.textReset:SetSize(110, 24); page.textReset:SetPoint("LEFT", page.textTest, "RIGHT", 8, 0)
+        page.textReset:SetText("Reset Position")
+        page.textReset:SetScript("OnClick", function() textSettings().point = nil; addon:RefreshTextAlert(alertKey) end)
+
+        page.textPreview = CreateText(page.textPreviewCard, defaultText, 0, 0, "GameFontNormalLarge")
+        page.textPreview:ClearAllPoints(); page.textPreview:SetPoint("CENTER", page.textPreviewCard, "CENTER", 0, -5)
+        page.textPreview:SetJustifyH("CENTER")
+        if page.textTimer then
+            page.textPreviewTimer = CreateText(page.textPreviewCard, "5.0s", 0, 0, "GameFontNormalLarge")
+            page.textPreviewTimer:ClearAllPoints()
+            page.textPreviewTimer:SetPoint("TOP", page.textPreview, "BOTTOM", 0, -4)
+        end
+        page.RefreshTextPreview = function()
+            local ts = textSettings()
+            page.textPreview:SetText(ts.text or defaultText)
+            page.textPreview:SetFont(ts.font or STANDARD_TEXT_FONT, math.min(42, ts.fontSize or 28), ts.outline or "OUTLINE")
+            page.textPreview:SetTextColor(ts.color.r, ts.color.g, ts.color.b, 1)
+            page.textPreview:Show()
+            if page.textPreviewTimer then
+                page.textPreviewTimer:SetFont(ts.font or STANDARD_TEXT_FONT, math.max(14, math.min(42, ts.fontSize or 28) - 4), ts.outline or "OUTLINE")
+                page.textPreviewTimer:SetTextColor(ts.color.r, ts.color.g, ts.color.b, 1)
+                page.textPreviewTimer:SetShown(ts.showTimer == true)
+            end
+        end
+    end
+
     local function BuildSuddenDoomPage()
         local page = CreateFrame("Frame", nil, pageHolder)
         page:SetAllPoints(); page.layoutKind = "suddendoom"
@@ -1146,62 +1245,13 @@ function addon:CreateConfigPanel(standalone)
         CreatePresetRow(page.glowCard, 14, -181, settings, function() page.colorSwatch.refresh(); changed() end)
         BuildAppearance(page, page.appearanceCard, "suddendoom")
 
-        local function textSettings() return DKAssistDB.suddenDoomTextAlert end
         AddSelector(page, page.textCard, "textSelector")
         page.glowTab = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
         page.glowTab:SetSize(90, 22)
         page.glowTab:SetPoint("LEFT", page.textSelector, "RIGHT", -18, 0)
         page.glowTab:SetText("Glow")
-        page.textEnable = CreateCheck(page.textCard, "Enable Text Alert", 14, -76,
-            function() return textSettings().enabled end,
-            function(v) textSettings().enabled = v; addon:RefreshTextAlert("suddenDoom") end)
-        page.textValue = CreateEditControl(page.textCard, "Display Text:", 14, -112, 170,
-            function() return textSettings().text end,
-            function(v) textSettings().text = v; addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
-        page.textColor = CreateColorControl(page.textCard, 14, -148, "Text Color:",
-            function() return textSettings().color end, function() addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
-        CreatePresetRow(page.textCard, 14, -179, textSettings, function()
-            page.textColor.refresh()
-            addon:RefreshTextAlert("suddenDoom")
-            page.RefreshTextPreview()
-        end)
-        page.textLock = CreateCheck(page.textCard, "Lock position", 200, -76,
-            function() return textSettings().locked end, function(v) textSettings().locked = v end)
-        page.textSize = CreateSlider(page.textCard, "Font Size", 14, -256, 190, 12, 48, 1,
-            function() return textSettings().fontSize or 28 end,
-            function(v) textSettings().fontSize = v; addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
-        local fontLabel = CreateText(page.textCard, "Font:", 14, -312, "GameFontNormal")
-        page.textFont = CreateDropdown(page.textCard, 0, 0, 150,
-            function() return TEXT_FONTS end,
-            function() return textSettings().font or "Fonts\\FRIZQT__.TTF" end,
-            function(v) textSettings().font = v; addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
-        page.textFont:ClearAllPoints(); page.textFont:SetPoint("LEFT", fontLabel, "RIGHT", -8, -2)
-        local outlineLabel = CreateText(page.textCard, "Outline Style:", 14, -348, "GameFontNormal")
-        page.textOutline = CreateDropdown(page.textCard, 0, 0, 150,
-            function() return TEXT_OUTLINES end,
-            function() return textSettings().outline or "OUTLINE" end,
-            function(v) textSettings().outline = v; addon:RefreshTextAlert("suddenDoom"); page.RefreshTextPreview() end)
-        page.textOutline:ClearAllPoints(); page.textOutline:SetPoint("LEFT", outlineLabel, "RIGHT", -8, -2)
-        page.textTest = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
-        page.textTest:SetSize(110, 24); page.textTest:SetPoint("TOPLEFT", page.textCard, "TOPLEFT", 14, AdjustedY(page.textCard, -382))
-        page.textTest:SetText("Test Text Alert")
-        page.textTest:SetScript("OnClick", function() addon:TestTextAlert("suddenDoom") end)
-        page.textReset = CreateFrame("Button", nil, page.textCard, "UIPanelButtonTemplate")
-        page.textReset:SetSize(110, 24); page.textReset:SetPoint("LEFT", page.textTest, "RIGHT", 8, 0)
-        page.textReset:SetText("Reset Position")
-        page.textReset:SetScript("OnClick", function() textSettings().point = nil; addon:RefreshTextAlert("suddenDoom") end)
-
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, 81340, false)
-        page.textPreview = CreateText(page.textPreviewCard, "SUDDEN DOOM", 0, 0, "GameFontNormalLarge")
-        page.textPreview:ClearAllPoints(); page.textPreview:SetPoint("CENTER", page.textPreviewCard, "CENTER", 0, -5)
-        page.textPreview:SetJustifyH("CENTER")
-        page.RefreshTextPreview = function()
-            local ts = textSettings()
-            page.textPreview:SetText(ts.text or "SUDDEN DOOM")
-            page.textPreview:SetFont(ts.font or STANDARD_TEXT_FONT, math.min(42, ts.fontSize or 28), ts.outline or "OUTLINE")
-            page.textPreview:SetTextColor(ts.color.r, ts.color.g, ts.color.b, 1)
-            page.textPreview:Show()
-        end
+        BuildProcTextControls(page, "suddenDoom", "SUDDEN DOOM")
         page.SetMode = function(mode)
             mode = mode == "text" and "text" or "glow"
             DKAssistDB.suddenDoomTextMode = mode
@@ -1227,6 +1277,24 @@ function addon:CreateConfigPanel(standalone)
             page.SetMode(DKAssistDB.suddenDoomTextMode or "glow")
         end
         pages.suddendoom = page
+    end
+
+    local function BuildFrostTextPage(pageKey, alertKey, titleText, defaultText)
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(pageHolder)
+        page.layoutKind = "frosttext"
+        page.textCard = CreateCard(page, titleText)
+        page.textPreviewCard = CreateCard(page, "Text Alert Preview")
+        AddSelector(page, page.textCard, "textSelector")
+        BuildProcTextControls(page, alertKey, defaultText)
+        page.refresh = function()
+            page.textSelector.refresh()
+            page.textEnable.refresh(); page.textValue.refresh(); page.textColor.refresh()
+            page.textTimer.refresh()
+            page.textLock.refresh(); page.textSize.refresh(); page.textFont.refresh(); page.textOutline.refresh()
+            page.RefreshTextPreview()
+        end
+        pages[pageKey] = page
     end
 
     local function BuildPutrefyPage()
@@ -1473,7 +1541,9 @@ function addon:CreateConfigPanel(standalone)
         page.previewCard = CreateCard(page, "Live Preview")
         page.infoCard = CreateCard(page, "How it works")
         AddSelector(page, page.settingsCard)
-        local trackerKey = key == "darktransformation" and "darkTransformation" or key
+        local trackerKey = key == "darktransformation" and "darkTransformation"
+            or (key == "pillaroffrost" and "pillarOfFrost"
+            or (key == "killingmachine" and "killingMachine" or key))
         local function settings() return addon:GetBurstTrackerSettings(trackerKey) end
         local firstY = -76
         page.timeline = CreateCheck(page.settingsCard, "Enable timeline", 14, firstY,
@@ -1482,7 +1552,7 @@ function addon:CreateConfigPanel(standalone)
         page.iconMode = CreateCheck(page.settingsCard, "Enable icon mode", 205, firstY,
             function() return settings().iconEnabled end,
             function(v) settings().iconEnabled = v; addon:RefreshBurstTrackers() end)
-        page.showName = CreateCheck(page.settingsCard, "Show spell name", 14, firstY - 32,
+        page.showName = CreateCheck(page.settingsCard, "Show icon spell name", 14, firstY - 32,
             function() return settings().showSpellName ~= false end,
             function(v) settings().showSpellName = v; addon:RefreshBurstTrackers() end)
         if key == "gargoyle" then
@@ -1490,7 +1560,78 @@ function addon:CreateConfigPanel(standalone)
                 function() return settings().showDamage end,
                 function(v) settings().showDamage = v; addon:RefreshBurstTrackers() end)
         end
-        local orientationLabel = CreateText(page.settingsCard, "Timeline Orientation:", 14, firstY - 75, "GameFontNormal")
+        page.timelineInfo = CreateCheck(page.settingsCard, "Show timeline info", 14, firstY - 64,
+            function() return settings().showTimelineInfo ~= false end,
+            function(v) settings().showTimelineInfo = v; addon:RefreshBurstTrackers() end)
+        if key == "killingmachine" or key == "rime" then
+            page.procOnly = true
+            page.textEnable = CreateCheck(page.settingsCard, "Enable Text Alert", 205, firstY,
+                function() return DKAssistDB[trackerKey .. "TextAlert"].enabled end,
+                function(v)
+                    DKAssistDB[trackerKey .. "TextAlert"].enabled = v
+                    addon:RefreshBurstTrackers()
+                end)
+            page.textOptions = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
+            page.textOptions:SetSize(130, 22)
+            page.textOptions:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 205, AdjustedY(page.settingsCard, firstY - 34))
+            page.textOptions:SetText("Text Alert Settings")
+            page.textOptions:SetScript("OnClick", function() panel:ShowPage(key .. "text") end)
+            page.procEnable = CreateCheck(page.settingsCard, "Enable icon alert", 14, firstY,
+                function() return settings().iconEnabled ~= false end,
+                function(v) settings().iconEnabled = v; addon:RefreshBurstTrackers() end)
+            local glowTargetLabel = CreateText(page.settingsCard, "Glow Target:", 14, firstY - 70, "GameFontNormal")
+            page.glowTarget = CreateDropdown(page.settingsCard, 0, 0, 145,
+                function() return {
+                    { text = "Tracker Icon", value = "icon" },
+                    { text = "Cooldown Manager", value = "cdm" },
+                } end,
+                function() return settings().glowTarget or "icon" end,
+                function(v)
+                    settings().glowTarget = v
+                    addon:RefreshBurstTrackers()
+                    if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+                end)
+            page.glowTarget:ClearAllPoints()
+            page.glowTarget:SetPoint("LEFT", glowTargetLabel, "RIGHT", -4, -2)
+
+            page.infoCard.title:SetText("Glow Appearance")
+            local glowStyleLabel = CreateText(page.infoCard, "Glow Style:", 18, -45, "GameFontNormal")
+            page.procGlowStyle = CreateDropdown(page.infoCard, 0, 0, 155,
+                function()
+                    local items = {}
+                    for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
+                        items[#items + 1] = { text = glowType.name, value = glowType.id }
+                    end
+                    return items
+                end,
+                function() return settings().glowType or "pixel" end,
+                function(v)
+                    settings().glowType = v
+                    addon:RefreshBurstTrackers()
+                    page.RefreshProcPreview()
+                end)
+            page.procGlowStyle:ClearAllPoints()
+            page.procGlowStyle:SetPoint("LEFT", glowStyleLabel, "RIGHT", -4, -2)
+            page.procGlowColor = CreateColorControl(page.infoCard, 18, -82, "Glow Color:",
+                function() return settings().color end,
+                function() addon:RefreshBurstTrackers(); page.RefreshProcPreview() end)
+            CreatePresetRow(page.infoCard, 18, -114, settings, function()
+                page.procGlowColor.refresh(); addon:RefreshBurstTrackers(); page.RefreshProcPreview()
+            end)
+            page.procGlowSpeed = CreateSlider(page.infoCard, "Animation Speed", 18, -150, 230, 0.05, 2, 0.05,
+                function() return settings().speed or 0.25 end,
+                function(v) settings().speed = v; addon:RefreshBurstTrackers(); page.RefreshProcPreview() end)
+            page.procGlowOpacity = CreateSlider(page.infoCard, "Opacity", 18, -202, 230, 0.1, 1, 0.05,
+                function() return settings().alpha or 1 end,
+                function(v) settings().alpha = v; addon:RefreshBurstTrackers(); page.RefreshProcPreview() end)
+            page.procGlowLines = CreateSlider(page.infoCard, "Lines / Particles", 18, -254, 230, 1, 16, 1,
+                function() return settings().lines or 8 end,
+                function(v) settings().lines = v; addon:RefreshBurstTrackers(); page.RefreshProcPreview() end)
+            page.procGlowThickness = CreateSlider(page.infoCard, "Thickness", 18, -306, 230, 1, 8, 1,
+                function() return settings().thickness or 2 end,
+                function(v) settings().thickness = v; addon:RefreshBurstTrackers(); page.RefreshProcPreview() end)
+        end
+        local orientationLabel = CreateText(page.settingsCard, "Timeline Orientation:", 14, firstY - 107, "GameFontNormal")
         page.orientation = CreateDropdown(page.settingsCard, 0, 0, 120,
             function()
                 return {
@@ -1502,26 +1643,39 @@ function addon:CreateConfigPanel(standalone)
             function(v) settings().timelineOrientation = v; addon:RefreshBurstTrackers() end)
         page.orientation:ClearAllPoints()
         page.orientation:SetPoint("LEFT", orientationLabel, "RIGHT", -6, -2)
-        page.timelineScale = CreateSlider(page.settingsCard, "Timeline Scale", 14, firstY - 112, 190, 40, 96, 1,
+        page.timelineScale = CreateSlider(page.settingsCard, "Timeline Scale", 14, firstY - 144, 190, 40, 96, 1,
             function() return settings().timelineScale end,
             function(v) settings().timelineScale = v; addon:RefreshBurstTrackers() end)
-        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, firstY - 164, 190, 36, 128, 1,
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, firstY - 196, 190, 36, 128, 1,
             function() return settings().iconSize end,
             function(v) settings().iconSize = v; addon:RefreshBurstTrackers() end)
-        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, firstY - 216, 190, 10, 32, 1,
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, firstY - 248, 190, 10, 32, 1,
             function() return settings().fontSize end,
             function(v) settings().fontSize = v; addon:RefreshBurstTrackers() end)
-        page.timelineLock = CreateCheck(page.settingsCard, "Lock timeline", 14, firstY - 270,
+        page.timelineLock = CreateCheck(page.settingsCard, "Lock timeline", 14, firstY - 302,
             function() return settings().timelineLocked end,
             function(v) settings().timelineLocked = v; addon:RefreshBurstTrackers() end)
-        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, firstY - 270,
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, firstY - 302,
             function() return settings().iconLocked end,
             function(v) settings().iconLocked = v; addon:RefreshBurstTrackers() end)
+        if key == "killingmachine" or key == "rime" then
+            settings().timelineEnabled = false
+            page.timeline:Hide(); page.iconMode:Hide(); page.timelineInfo:Hide()
+            orientationLabel:Hide(); page.orientation:Hide(); page.timelineScale:Hide(); page.timelineLock:Hide()
+            if page.orientation.dkassistModern then page.orientation.dkassistModern:Hide() end
+            page.iconSize:ClearAllPoints(); page.iconSize:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 14, firstY - 112)
+            page.fontSize:ClearAllPoints(); page.fontSize:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 14, firstY - 164)
+            page.iconLock:ClearAllPoints(); page.iconLock:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 205, firstY - 218)
+        end
         page.reset = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
         page.reset:SetSize(145, 24)
-        page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, firstY - 316))
+        page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, firstY - 348))
         page.reset:SetText("Reset Positions")
         page.reset:SetScript("OnClick", function() addon:ResetBurstTrackerPositions(trackerKey) end)
+        if key == "killingmachine" or key == "rime" then
+            page.reset:ClearAllPoints()
+            page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, firstY - 262))
+        end
         page.previewIcon, page.previewBar = CreatePreview(page.previewCard, spellID, false)
         if key == "gargoyle" then
             page.previewIcon:SetBackdrop({
@@ -1530,37 +1684,319 @@ function addon:CreateConfigPanel(standalone)
                 edgeSize = 1,
             })
             page.previewIcon:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        elseif key == "killingmachine" then
+            page.previewIcon:SetBackdrop({
+                bgFile = "Interface\\Icons\\INV_Sword_122",
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                edgeSize = 1,
+            })
+            page.previewIcon:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
         end
         page.previewIcon:ClearAllPoints()
         page.previewIcon:SetPoint("TOP", page.previewCard, "TOP", 0, -48)
+        local previewDuration = key == "gargoyle" and "25.0   +65% Damage"
+            or (key == "darktransformation" and "15.0   Best: 0s"
+            or (key == "pillaroffrost" and "12.0   Best: 0s"
+            or "Proc active"))
         page.previewText = CreateText(page.previewCard,
-            key == "gargoyle" and "Timeline + Icon Mode\n25.0   +65% Damage" or "Timeline + Icon Mode\n30.0",
+            ((key == "killingmachine" or key == "rime") and "Icon Alert\n" or "Timeline + Icon Mode\n") .. previewDuration,
             0, 0, "GameFontHighlightSmall", 330, { 0.75, 0.9, 0.75 })
         page.previewText:ClearAllPoints()
         page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -8)
         page.previewText:SetJustifyH("CENTER")
-        page.hint = CreateText(page.infoCard, description .. "\n\nTimeline and icon mode can be enabled together or separately. Unlock a position, press Test, then drag the display where you want it.",
+        if key == "killingmachine" or key == "rime" then
+            page.RefreshProcPreview = function()
+                for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
+                    if glowType.stop then pcall(glowType.stop, page.previewIcon) end
+                end
+                local s = settings()
+                local glowType = addon:GetGlowTypeByID(s.glowType or "pixel")
+                if glowType and glowType.start then
+                    pcall(glowType.start, page.previewIcon, {
+                        color = s.color, alpha = s.alpha or 1, lines = s.lines or 8,
+                        speed = s.speed or 0.25, thickness = s.thickness or 2,
+                    })
+                end
+            end
+        end
+        local usageHint = (key == "killingmachine" or key == "rime")
+            and "\n\nChoose the DK Assist icon or Cooldown Manager as the glow target. Unlock the icon, press Test, then drag it where you want it."
+            or "\n\nTimeline and icon mode can be enabled together or separately. Unlock a position, press Test, then drag the display where you want it."
+        page.hint = CreateText(page.infoCard, description .. usageHint,
             18, -45, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
+        if key == "killingmachine" or key == "rime" then page.hint:Hide() end
         page.refresh = function()
-            page.selector.refresh(); page.timeline.refresh(); page.iconMode.refresh(); page.showName.refresh()
+            page.selector.refresh(); page.showName.refresh(); page.timelineInfo.refresh()
+            local procOnly = key == "killingmachine" or key == "rime"
+            if not procOnly then page.timeline.refresh(); page.iconMode.refresh() end
+            if page.procEnable then page.procEnable.refresh() end
+            if page.textEnable then page.textEnable.refresh() end
             if page.damage then page.damage.refresh() end
-            page.orientation.refresh(); page.timelineScale.refresh(); page.iconSize.refresh(); page.fontSize.refresh(); page.timelineLock.refresh(); page.iconLock.refresh()
+            if page.glowTarget then page.glowTarget.refresh() end
+            if not procOnly then page.orientation.refresh(); page.timelineScale.refresh(); page.timelineLock.refresh() end
+            page.iconSize.refresh(); page.fontSize.refresh(); page.iconLock.refresh()
+            if procOnly then
+                page.orientation:Hide()
+                if page.orientation.dkassistModern then page.orientation.dkassistModern:Hide() end
+                page.procGlowStyle.refresh(); page.procGlowColor.refresh(); page.procGlowSpeed.refresh(); page.procGlowOpacity.refresh()
+                page.procGlowLines.refresh(); page.procGlowThickness.refresh()
+                page.RefreshProcPreview()
+            end
         end
         pages[key] = page
+    end
+
+    local function BuildBreathPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "bursttracker"
+        page.settingsCard = CreateCard(page, "Breath of Sindragosa Tracker")
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.infoCard = CreateCard(page, "How it works")
+        AddSelector(page, page.settingsCard)
+        local function settings() return addon:GetBreathTrackerSettings() end
+        page.enable = CreateCheck(page.settingsCard, "Enable timeline", 14, -76,
+            function() return settings().timelineEnabled end,
+            function(v) settings().timelineEnabled = v; addon:RefreshBreathTracker() end)
+        page.iconMode = CreateCheck(page.settingsCard, "Enable icon mode", 205, -76,
+            function() return settings().iconEnabled end,
+            function(v) settings().iconEnabled = v; addon:RefreshBreathTracker() end)
+        page.showName = CreateCheck(page.settingsCard, "Show icon spell name", 14, -108,
+            function() return settings().showSpellName ~= false end,
+            function(v) settings().showSpellName = v; addon:RefreshBreathTracker() end)
+        page.showInfo = CreateCheck(page.settingsCard, "Show timeline info", 205, -108,
+            function() return settings().showInfo ~= false end,
+            function(v) settings().showInfo = v; addon:RefreshBreathTracker() end)
+        page.showInfo:Hide()
+        local orientationLabel = CreateText(page.settingsCard, "Timeline Orientation:", 14, -150, "GameFontNormal")
+        page.orientation = CreateDropdown(page.settingsCard, 0, 0, 120,
+            function() return {
+                { text = "Horizontal", value = "horizontal" },
+                { text = "Vertical", value = "vertical" },
+            } end,
+            function() return settings().timelineOrientation or "horizontal" end,
+            function(v) settings().timelineOrientation = v; addon:RefreshBreathTracker() end)
+        page.orientation:ClearAllPoints()
+        page.orientation:SetPoint("LEFT", orientationLabel, "RIGHT", -6, -2)
+        page.scale = CreateSlider(page.settingsCard, "Timeline Scale", 14, -198, 190, 40, 96, 1,
+            function() return settings().timelineScale or 64 end,
+            function(v) settings().timelineScale = v; addon:RefreshBreathTracker() end)
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -250, 190, 36, 128, 1,
+            function() return settings().iconSize or 64 end,
+            function(v) settings().iconSize = v; addon:RefreshBreathTracker() end)
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, -302, 190, 10, 32, 1,
+            function() return settings().fontSize or 18 end,
+            function(v) settings().fontSize = v; addon:RefreshBreathTracker() end)
+        page.lock = CreateCheck(page.settingsCard, "Lock timeline", 14, -356,
+            function() return settings().timelineLocked end,
+            function(v) settings().timelineLocked = v; addon:RefreshBreathTracker() end)
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 205, -356,
+            function() return settings().iconLocked end,
+            function(v) settings().iconLocked = v; addon:RefreshBreathTracker() end)
+        page.reset = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
+        page.reset:SetSize(145, 24)
+        page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, -402))
+        page.reset:SetText("Reset Positions")
+        page.reset:SetScript("OnClick", function() addon:ResetBreathTrackerPosition() end)
+        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, 1249658, false)
+        page.previewIcon:ClearAllPoints()
+        page.previewIcon:SetPoint("TOP", page.previewCard, "TOP", 0, -48)
+        page.previewText = CreateText(page.previewCard, "12.0",
+            0, 0, "GameFontHighlightSmall", 330, { 0.75, 0.9, 0.75 })
+        page.previewText:ClearAllPoints()
+        page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -8)
+        page.previewText:SetJustifyH("CENTER")
+        page.hint = CreateText(page.infoCard,
+            "Displays Blizzard's Breath of Sindragosa bar, icon, and live elapsed timer. Total, Extend, and the final summary remain hidden.",
+            18, -45, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
+        page.refresh = function()
+            page.selector.refresh(); page.enable.refresh(); page.iconMode.refresh(); page.showName.refresh(); page.showInfo.refresh()
+            page.orientation.refresh(); page.scale.refresh(); page.iconSize.refresh(); page.fontSize.refresh(); page.lock.refresh(); page.iconLock.refresh()
+        end
+        pages.breath = page
+    end
+
+    local function BuildBoneShieldPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "boneshield"
+        page.settingsCard = CreateCard(page, "Bone Shield Reminder")
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.infoCard = CreateCard(page, "Cooldown Manager Status")
+        AddSelector(page, page.settingsCard)
+
+        local function settings()
+            DKAssistDB.bloodBone = DKAssistDB.bloodBone or {}
+            return DKAssistDB.bloodBone
+        end
+
+        page.enable = CreateCheck(page.settingsCard, "Enable Bone Shield reminder", 14, -76,
+            function() return settings().enabled end,
+            function(v) settings().enabled = v; addon:RefreshBoneShieldReminder() end)
+        page.textAlert = CreateCheck(page.settingsCard, "Enable text alert", 14, -112,
+            function() return settings().textAlert ~= false end,
+            function(v) settings().textAlert = v; addon:RefreshBoneShieldReminder() end)
+        page.soundAlert = CreateCheck(page.settingsCard, "Enable sound alert", 205, -112,
+            function() return settings().soundAlert ~= false end,
+            function(v) settings().soundAlert = v; addon:RefreshBoneShieldReminder() end)
+        page.earlyWarning = CreateCheck(page.settingsCard, "Warn at 5 seconds", 14, -148,
+            function() return settings().earlyWarning ~= false end,
+            function(v) settings().earlyWarning = v; addon:RefreshBoneShieldReminder() end)
+        page.missingWarning = CreateCheck(page.settingsCard, "Warn when missing", 205, -148,
+            function() return settings().missingWarning ~= false end,
+            function(v) settings().missingWarning = v; addon:RefreshBoneShieldReminder() end)
+        page.ossuaryWarning = CreateCheck(page.settingsCard, "Warn when stacks are low (Ossuary)", 14, -184,
+            function() return settings().ossuaryWarning == true end,
+            function(v) settings().ossuaryWarning = v; addon:RefreshBoneShieldReminder() end)
+        page.warningAfter = CreateSlider(page.settingsCard, "Warn After (seconds)", 14, -238, 190, 5, 29, 1,
+            function() return settings().warningAfter or 25 end,
+            function(v) settings().warningAfter = v; addon:RefreshBoneShieldReminder() end)
+
+        local soundItems = {
+            { text = "Raid Warning", value = "RAID_WARNING" },
+            { text = "Ready Check", value = "READY_CHECK" },
+            { text = "Alarm Clock", value = "ALARM_CLOCK_WARNING_3" },
+            { text = "PvP Queue", value = "PVP_THROUGH_QUEUE" },
+            { text = "No Sound", value = "none" },
+        }
+        local function PreviewSound(value)
+            if value ~= "none" and SOUNDKIT and SOUNDKIT[value] then PlaySound(SOUNDKIT[value], "Master") end
+        end
+        local earlySoundLabel = CreateText(page.settingsCard, "5-second Sound:", 14, -294, "GameFontNormal")
+        page.earlySound = CreateDropdown(page.settingsCard, 0, 0, 135,
+            function() return soundItems end,
+            function() return settings().earlySound or "READY_CHECK" end,
+            function(v) settings().earlySound = v; PreviewSound(v) end)
+        page.earlySound:ClearAllPoints()
+        page.earlySound:SetPoint("LEFT", earlySoundLabel, "RIGHT", -8, -2)
+        local missingSoundLabel = CreateText(page.settingsCard, "Missing Sound:", 14, -334, "GameFontNormal")
+        page.missingSound = CreateDropdown(page.settingsCard, 0, 0, 135,
+            function() return soundItems end,
+            function() return settings().missingSound or "RAID_WARNING" end,
+            function(v) settings().missingSound = v; PreviewSound(v) end)
+        page.missingSound:ClearAllPoints()
+        page.missingSound:SetPoint("LEFT", missingSoundLabel, "RIGHT", -8, -2)
+
+        page.rescan = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
+        page.rescan:SetSize(190, 24)
+        page.rescan:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, -382))
+        page.rescan:SetText("Rescan Cooldown Manager")
+
+        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, addon.SPELLS.BONE_SHIELD.id, false)
+        page.previewIcon:ClearAllPoints()
+        page.previewIcon:SetPoint("TOP", page.previewCard, "TOP", 0, -48)
+        page.previewText = CreateText(page.previewCard, "BONE SHIELD!", 0, 0, "GameFontNormalLarge", 330, { 1, 0.15, 0.15 })
+        page.previewText:ClearAllPoints()
+        page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -10)
+        page.previewText:SetJustifyH("CENTER")
+
+        page.status = CreateText(page.infoCard, "", 18, -46, "GameFontNormal", 330)
+        page.help = CreateText(page.infoCard,
+            "Add Bone Shield to Blizzard's Cooldown Manager, then press Rescan. Ossuary is optional and only adds an early low-stack warning. No setup message will appear over your game.",
+            18, -92, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
+
+        local function RefreshStatus(rescan)
+            local bone, ossuary
+            if rescan and addon.RescanBoneShieldReminder then
+                bone, ossuary = addon:RescanBoneShieldReminder()
+            elseif addon.GetBoneShieldReminderStatus then
+                bone, ossuary = addon:GetBoneShieldReminderStatus()
+            end
+            local yes, no, optional = "|cff35e66fDetected|r", "|cffff5555Not detected|r", "|cffaaaaaaOptional|r"
+            page.status:SetText("Bone Shield: " .. (bone and yes or no) .. "\nOssuary: " .. (ossuary and yes or optional))
+        end
+        page.rescan:SetScript("OnClick", function() RefreshStatus(true) end)
+        page.refresh = function()
+            page.selector.refresh(); page.enable.refresh(); page.textAlert.refresh(); page.soundAlert.refresh()
+            page.earlyWarning.refresh(); page.missingWarning.refresh(); page.ossuaryWarning.refresh(); page.warningAfter.refresh()
+            page.earlySound.refresh(); page.missingSound.refresh()
+            RefreshStatus(false)
+        end
+        pages.bloodbone = page
+    end
+
+    local function BuildBloodShieldPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "bloodshield"
+        page.settingsCard = CreateCard(page, "Blood Shield Tracker")
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.infoCard = CreateCard(page, "How it works")
+        AddSelector(page, page.settingsCard)
+
+        local function settings()
+            DKAssistDB.bloodShield = DKAssistDB.bloodShield or {}
+            return DKAssistDB.bloodShield
+        end
+        local function changed() addon:RefreshBloodShieldVisual() end
+
+        page.enable = CreateCheck(page.settingsCard, "Enable Blood Shield tracker", 14, -76,
+            function() return settings().enabled end,
+            function(v) settings().enabled = v; changed() end)
+        page.showIcon = CreateCheck(page.settingsCard, "Show icon", 14, -112,
+            function() return settings().showIcon ~= false end,
+            function(v) settings().showIcon = v; changed() end)
+        page.showDuration = CreateCheck(page.settingsCard, "Show duration", 205, -112,
+            function() return settings().showDuration ~= false end,
+            function(v) settings().showDuration = v; changed() end)
+        page.width = CreateSlider(page.settingsCard, "Bar Width", 14, -166, 190, 120, 420, 5,
+            function() return settings().width or 260 end,
+            function(v) settings().width = v; changed() end)
+        page.height = CreateSlider(page.settingsCard, "Bar Height", 14, -218, 190, 18, 70, 1,
+            function() return settings().height or 36 end,
+            function(v) settings().height = v; changed() end)
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -270, 190, 28, 100, 1,
+            function() return settings().iconSize or 52 end,
+            function(v) settings().iconSize = v; changed() end)
+        page.color = CreateColorControl(page.settingsCard, 14, -320, "Bar Color:",
+            function() return settings().color end, changed)
+        page.lock = CreateCheck(page.settingsCard, "Lock position", 14, -372,
+            function() return settings().locked end,
+            function(v) settings().locked = v; changed() end)
+        page.reset = CreateFrame("Button", nil, page.settingsCard, "UIPanelButtonTemplate")
+        page.reset:SetSize(145, 24)
+        page.reset:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 18, AdjustedY(page.settingsCard, -414))
+        page.reset:SetText("Reset Position")
+        page.reset:SetScript("OnClick", function() addon:ResetBloodShieldVisualPosition() end)
+
+        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, addon.SPELLS.BLOOD_SHIELD.id, false)
+        page.previewIcon:ClearAllPoints()
+        page.previewIcon:SetPoint("TOP", page.previewCard, "TOP", 0, -48)
+        page.previewText = CreateText(page.previewCard, "Blood Shield",
+            0, 0, "GameFontNormalLarge", 330, { 0.25, 0.80, 1.00 })
+        page.previewText:ClearAllPoints()
+        page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -10)
+        page.previewText:SetJustifyH("CENTER")
+        page.help = CreateText(page.infoCard,
+            "The main bar shows current absorb strength. The thin yellow bar uses Blood Shield's real aura duration when available and falls back to a 10-second timer refreshed by each successful Death Strike.",
+            18, -45, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
+        page.refresh = function()
+            page.selector.refresh(); page.enable.refresh(); page.showIcon.refresh(); page.showDuration.refresh()
+            page.width.refresh(); page.height.refresh(); page.iconSize.refresh(); page.color.refresh(); page.lock.refresh()
+        end
+        pages.bloodshield = page
     end
 
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
     BuildGlowPage("deathcoil", "Death Coil - Sudden Doom", addon.SPELLS.DEATH_COIL.id)
     BuildGlowPage("epidemic", "Epidemic - Sudden Doom", addon.SPELLS.EPIDEMIC.id)
     BuildSuddenDoomPage()
+    BuildFrostTextPage("killingmachinetext", "killingMachine", "Killing Machine Text Alert", "KILLING MACHINE")
+    BuildFrostTextPage("rimetext", "rime", "Rime Text Alert", "RIME")
     BuildPutrefyPage()
     BuildGlowPage("runic", "Runic Power Glow", nil)
+    BuildBoneShieldPage()
+    BuildBloodShieldPage()
     BuildDnDPage()
     BuildBlightfallPage()
     BuildBurstTrackerPage("gargoyle", "Gargoyle Tracker", 42650,
         "Tracks the 25-second Summon Gargoyle window. It shows the remaining duration, Runic Power spent, current damage increase, and your best result.")
     BuildBurstTrackerPage("darktransformation", "Dark Transformation Tracker", addon.SPELLS.DARK_TRANSFORMATION.id,
-        "Tracks the real Dark Transformation aura duration, including time added by Death Coil and Epidemic extensions.")
+        "Starts at 15 seconds and adds 1 second for every Death Coil or Epidemic cast while Dark Transformation is active. The tracker also records the final and best extended duration.")
+    BuildBurstTrackerPage("pillaroffrost", "Pillar of Frost Tracker", addon.SPELLS.PILLAR_OF_FROST.id,
+        "Tracks the real Pillar of Frost aura duration on your character. Extensions such as Long Winter and Frostwyrm's Fury are reflected automatically, and the tracker records your final and best duration.")
+    BuildBreathPage()
+    BuildBurstTrackerPage("killingmachine", "Killing Machine Alert", addon.SPELLS.KILLING_MACHINE.id,
+        "Shows a movable alert while Killing Machine is active. The timer follows the real proc aura and disappears as soon as the proc is consumed.")
+    BuildBurstTrackerPage("rime", "Rime Alert", addon.SPELLS.RIME.id,
+        "Shows a movable alert while Rime is active. Choose whether the glow appears around the DK Assist tracker icon or the Rime buff in Cooldown Manager.")
 
     if standalone then
         local NAV_GROUPS = {
@@ -1598,6 +2034,26 @@ function addon:CreateConfigPanel(standalone)
                 spec = "blood",
                 items = {
                     { "Death and Decay", "dnd" },
+                    { "Bone Shield Reminder", "bloodbone" },
+                    { "Blood Shield Tracker", "bloodshield" },
+                },
+            },
+            {
+                title = "FROST - WARNINGS",
+                spec = "frost",
+                items = {
+                    { "Killing Machine", "killingmachine" },
+                    { "Killing Machine Text Alert", "killingmachinetext" },
+                    { "Rime", "rime" },
+                    { "Rime Text Alert", "rimetext" },
+                },
+            },
+            {
+                title = "FROST - TRACKERS",
+                spec = "frost",
+                items = {
+                    { "Pillar of Frost", "pillaroffrost" },
+                    { "Breath of Sindragosa", "breath" },
                 },
             },
         }
@@ -1730,6 +2186,15 @@ function addon:CreateConfigPanel(standalone)
                     page.appearanceCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, contentLowerY)
                     page.appearanceCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
                 end
+            elseif page.layoutKind == "frosttext" then
+                page.textCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                if standalone then
+                    page.textCard:SetSize(leftWidth, math.min(height, 430))
+                else
+                    page.textCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
+                page.textPreviewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+                page.textPreviewCard:SetSize(rightWidth, standalone and 260 or topHeight)
             elseif page.layoutKind == "suddendoom" then
                 page.glowCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 if standalone then
@@ -1781,6 +2246,22 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.dndTimerHint:SetWidth(math.max(230, leftWidth - 36))
+            elseif page.layoutKind == "boneshield" or page.layoutKind == "bloodshield" then
+                page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                if standalone then
+                    page.settingsCard:SetSize(leftWidth, math.min(height, 610))
+                else
+                    page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", leftWidth, 0)
+                end
+                page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+                page.previewCard:SetSize(rightWidth, topHeight)
+                page.infoCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
+                if standalone then
+                    page.infoCard:SetSize(rightWidth, 220)
+                else
+                    page.infoCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                end
+                page.help:SetWidth(math.max(210, rightWidth - 36))
             elseif page.layoutKind == "glow" or page.layoutKind == "putrefy" then
                 if key == "runic" or standalone then
                     page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
@@ -1845,7 +2326,7 @@ function addon:CreateConfigPanel(standalone)
                 page.previewCard:SetSize(rightWidth, topHeight)
                 page.infoCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
                 if standalone then
-                    page.infoCard:SetSize(rightWidth, 220)
+                    page.infoCard:SetSize(rightWidth, page.procOnly and 365 or 220)
                 else
                     page.infoCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 end
@@ -1867,7 +2348,7 @@ function addon:CreateConfigPanel(standalone)
         testActive = false; testButton:SetText("Test")
         cdmCheck:SetShown(pageKey == "festering" or pageKey == "putrefy" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
         cdmCheck.Text:SetText(key == "putrefy" and "Track on Cooldown Manager" or "Use Cooldown Manager (instead of action bars)")
-        rescanButton:SetShown(key ~= "dnd" and key ~= "blightfall" and key ~= "soulreaper" and key ~= "gargoyle" and key ~= "darktransformation")
+        rescanButton:SetShown(key ~= "dnd" and key ~= "blightfall" and key ~= "soulreaper" and key ~= "gargoyle" and key ~= "darktransformation" and key ~= "pillaroffrost" and key ~= "breath")
         testButton:SetShown(key ~= "soulreaper")
         cdmCheck.refresh()
         activePage.refresh()
@@ -1886,6 +2367,13 @@ function addon:CreateConfigPanel(standalone)
         local activeSpec = ActiveConfigSpec()
         if activeSpec == "blood" and selectedKey ~= "dnd" then
             selectedKey = "dnd"
+        elseif activeSpec == "frost"
+            and selectedKey ~= "pillaroffrost"
+            and selectedKey ~= "killingmachine"
+            and selectedKey ~= "rime"
+            and selectedKey ~= "killingmachinetext"
+            and selectedKey ~= "rimetext" then
+            selectedKey = "pillaroffrost"
         elseif activeSpec == "unholy" and not pages[selectedKey] then
             selectedKey = "festering"
         end
@@ -2255,7 +2743,11 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetScript("OnClick", function()
         testActive = not testActive
         if testActive then
-            if selectedKey == "festeringwa" then
+            if selectedKey == "killingmachinetext" then
+                addon:TestTextAlert("killingMachine")
+            elseif selectedKey == "rimetext" then
+                addon:TestTextAlert("rime")
+            elseif selectedKey == "festeringwa" then
                 addon:TestTextAlert("festeringScythe")
             elseif selectedKey == "suddendoomwa" then
                 addon:TestTextAlert("suddenDoom")
@@ -2269,7 +2761,10 @@ function addon:CreateConfigPanel(standalone)
             elseif selectedKey == "runic" then addon:TestRunicPowerGlow()
             elseif selectedKey == "blooddnd" then addon:TestBloodDnDReminder()
             elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
-            elseif selectedKey == "bloodbone" then addon:TestBloodBoneReminder()
+            elseif selectedKey == "bloodbone" then
+                addon:TestBloodBoneReminder()
+            elseif selectedKey == "bloodshield" then
+                addon:TestBloodShieldVisual()
             elseif selectedKey == "dnd" then
                 addon:TestDnDTracker()
                 if DKAssistDB.bloodDndMissing.enabled and addon.TestDnDMissingGlow then
@@ -2277,10 +2772,14 @@ function addon:CreateConfigPanel(standalone)
                 end
             elseif selectedKey == "blightfall" then addon:TestBlightfallTracker()
             elseif selectedKey == "gargoyle" then addon:TestBurstTracker("gargoyle")
-            elseif selectedKey == "darktransformation" then addon:TestBurstTracker("darkTransformation") end
+            elseif selectedKey == "darktransformation" then addon:TestBurstTracker("darkTransformation")
+            elseif selectedKey == "pillaroffrost" then addon:TestBurstTracker("pillarOfFrost")
+            elseif selectedKey == "breath" then addon:TestBreathTracker()
+            elseif selectedKey == "killingmachine" then addon:TestBurstTracker("killingMachine")
+            elseif selectedKey == "rime" then addon:TestBurstTracker("rime") end
             testButton:SetText("Stop Test")
         else
-            addon:StopAll(); addon:StopDnDTest(); addon:StopBlightfallTest(); addon:StopBurstTrackerTest(); addon:StopRunicPowerGlow(); addon:StopBloodDnDReminder(); addon:StopDnDMissingGlow(); addon:StopBloodBoneReminder()
+            addon:StopAll(); addon:StopDnDTest(); addon:StopBlightfallTest(); addon:StopBurstTrackerTest(); addon:StopBreathTrackerTest(); addon:StopRunicPowerGlow(); addon:StopBloodDnDReminder(); addon:StopDnDMissingGlow(); addon:StopBloodBoneReminder(); addon:StopBloodShieldVisualTest()
             testButton:SetText("Test")
         end
     end)
@@ -2297,6 +2796,8 @@ function addon:CreateConfigPanel(standalone)
         StopPreview(activePage)
         addon:StopBlightfallTest()
         addon:StopBurstTrackerTest()
+        addon:StopBreathTrackerTest()
+        addon:StopBloodShieldVisualTest()
         testActive = false; testButton:SetText("Test")
         for _, dropdown in ipairs(panel.dkassistModernDropdowns or {}) do
             if dropdown.menu then dropdown.menu:Hide() end

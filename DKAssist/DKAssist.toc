@@ -2,7 +2,7 @@
 ## Title: DK Assist
 ## Notes: Configurable Unholy, Frost, and Blood Death Knight combat alerts and trackers
 ## Author: FaneyQ8
-## Version: 2.0.2
+## Version: 2.1.0
 ## IconTexture: Interface\AddOns\DKAssist\Media\Icon-2.0.1.png
 ## AddonCompartmentFunc: DKAssist_AddonCompartmentClick
 ## AddonCompartmentFuncOnEnter: DKAssist_AddonCompartmentEnter
@@ -10,13 +10,16 @@
 
 ## SavedVariables: DKAssistDB
 
-## OptionalDeps: LibCustomGlow-1.0, HidingBar, EllesmereUICooldownManager
+## OptionalDeps: LibCustomGlow-1.0, HidingBar, EllesmereUICooldownManager, Blizzard_AuraContainer
 
 Libs/LibStub/LibStub.lua
 Libs/LibCustomGlow-1.0/LibCustomGlow-1.0.lua
 
 Core.lua
+BoneShieldReminder.lua
+BloodShieldVisual.lua
 BurstTrackers.lua
+BreathTracker.lua
 RunicPower.lua
 ButtonScanner.lua
 Config.lua
