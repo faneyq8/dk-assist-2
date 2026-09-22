@@ -2,7 +2,7 @@
 ## Title: DK Assist
 ## Notes: Configurable Unholy, Frost, and Blood Death Knight combat alerts and trackers
 ## Author: FaneyQ8
-## Version: 2.1.0
+## Version: 2.1.1
 ## IconTexture: Interface\AddOns\DKAssist\Media\Icon-2.0.1.png
 ## AddonCompartmentFunc: DKAssist_AddonCompartmentClick
 ## AddonCompartmentFuncOnEnter: DKAssist_AddonCompartmentEnter

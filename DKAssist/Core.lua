@@ -387,6 +387,30 @@ local function GetTextAlertSettings(key)
     return DKAssistDB and DKAssistDB.spells and DKAssistDB.spells[key] and DKAssistDB.spells[key].textAlert
 end
 
+local function StopTextAlertDrag(frame, key)
+    if not frame._textDragging then return end
+    frame._textDragging = false
+    frame:StopMovingOrSizing()
+    local settings = GetTextAlertSettings(key)
+    if settings then
+        local point, _, relativePoint, x, y = frame:GetPoint()
+        settings.point = { point, relativePoint, x, y }
+    end
+end
+
+local function UpdateTextAlertMouse(frame, key)
+    local settings = GetTextAlertSettings(key)
+    local canDrag = settings ~= nil and not settings.locked and not InCombatLockdown()
+    if not canDrag then StopTextAlertDrag(frame, key) end
+    frame:EnableMouse(canDrag)
+end
+
+local function RefreshTextAlertMouse()
+    for key, frame in pairs(textAlertFrames) do
+        UpdateTextAlertMouse(frame, key)
+    end
+end
+
 local function EnsureTextAlertFrame(key)
     if textAlertFrames[key] then return textAlertFrames[key] end
     local frame = CreateFrame("Frame", "DKAssistTextAlert" .. key, UIParent, "BackdropTemplate")
@@ -394,20 +418,19 @@ local function EnsureTextAlertFrame(key)
     frame:SetFrameStrata("HIGH")
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
-    frame:EnableMouse(true)
+    UpdateTextAlertMouse(frame, key)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self)
         local settings = GetTextAlertSettings(key)
-        if settings and not settings.locked then self:StartMoving() end
-    end)
-    frame:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local settings = GetTextAlertSettings(key)
-        if settings then
-            local point, _, relativePoint, x, y = self:GetPoint()
-            settings.point = { point, relativePoint, x, y }
+        if settings and not settings.locked and not InCombatLockdown() then
+            self._textDragging = true
+            self:StartMoving()
         end
     end)
+    frame:SetScript("OnDragStop", function(self)
+        StopTextAlertDrag(self, key)
+    end)
+    frame:SetScript("OnHide", function(self) StopTextAlertDrag(self, key) end)
     frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     frame.text:SetPoint("TOP", frame, "TOP", 0, -2)
     frame.text:SetJustifyH("CENTER")
@@ -425,6 +448,7 @@ function addon:RefreshTextAlert(key)
     local settings = GetTextAlertSettings(key)
     if not settings then return end
     local frame = EnsureTextAlertFrame(key)
+    UpdateTextAlertMouse(frame, key)
     frame:ClearAllPoints()
     if settings.point then
         frame:SetPoint(settings.point[1], UIParent, settings.point[2], settings.point[3], settings.point[4])
@@ -2847,6 +2871,7 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         end
         addon:OnBlightfallChainSpellCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
+        RefreshTextAlertMouse()
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
         StopPutrefyWarning()
@@ -2855,6 +2880,7 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         addon:ShowPutrefyHoldWarning()
         if addon.OnBoneShieldCombatEnd then addon:OnBoneShieldCombatEnd() end
     elseif event == "PLAYER_REGEN_DISABLED" then
+        RefreshTextAlertMouse()
         OnFesteringCombatStart()
         if addon.OnBoneShieldCombatStart then addon:OnBoneShieldCombatStart() end
     end

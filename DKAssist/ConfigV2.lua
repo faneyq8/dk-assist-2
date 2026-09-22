@@ -947,7 +947,10 @@ function addon:CreateConfigPanel(standalone)
             end
             page.textLock = CreateCheck(page.textSettingsCard, "Lock position", 200, -104,
                 function() return textSettings().locked end,
-                function(value) textSettings().locked = value end)
+                function(value)
+                    textSettings().locked = value
+                    addon:RefreshTextAlert(key == "festering" and "festeringScythe" or (key == "deathcoil" and "deathCoil" or "epidemic"))
+                end)
             page.textSize = CreateSlider(page.textSettingsCard, "Font Size", 14, -298, 190, 12, 48, 1,
                 function() return textSettings().fontSize or 28 end,
                 function(value)
@@ -1157,7 +1160,8 @@ function addon:CreateConfigPanel(standalone)
             page.RefreshTextPreview()
         end)
         page.textLock = CreateCheck(page.textCard, "Lock position", 200, -76,
-            function() return textSettings().locked end, function(v) textSettings().locked = v end)
+            function() return textSettings().locked end,
+            function(v) textSettings().locked = v; addon:RefreshTextAlert(alertKey) end)
         if alertKey == "killingMachine" or alertKey == "rime" then
             page.textTimer = CreateCheck(page.textCard, "Show timer below text", 14, -218,
                 function() return textSettings().showTimer == true end,
