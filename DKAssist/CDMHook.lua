@@ -21,6 +21,62 @@ local MARROWREND_SPELL_ID = 195182
 local DEATHS_CARESS_SPELL_ID = 195292
 local hooked = false
 
+local function CleanSpellID(value)
+    if issecretvalue and issecretvalue(value) then return nil end
+    if type(value) == "number" and value > 0 then return value end
+end
+
+local function ReadSpellID(reader, ...)
+    if type(reader) ~= "function" then return nil end
+    local ok, value = pcall(reader, ...)
+    if ok then return CleanSpellID(value) end
+end
+
+-- CDM can track the Scythe aura rather than the castable Scythe spell.
+-- Resolve alternate IDs by their localized spell name outside combat,
+-- instead of guessing aura IDs or matching a shared icon texture.
+local festeringIdentities = {}
+local function IsFesteringSpell(value)
+    local id = CleanSpellID(value)
+    if not id then return false end
+    if id == FESTERING_SCYTHE_SPELL_ID or id == FESTERING_STRIKE_SPELL_ID then return true end
+    if festeringIdentities[id] ~= nil then return festeringIdentities[id] end
+    if InCombatLockdown() or not (C_Spell and C_Spell.GetSpellName) then return false end
+    local function nameFor(spellID)
+        local ok, name = pcall(C_Spell.GetSpellName, spellID)
+        if not ok or (issecretvalue and issecretvalue(name)) then return nil end
+        if type(name) == "string" and name ~= "" then return name end
+    end
+    local name = nameFor(id)
+    local scythe = nameFor(FESTERING_SCYTHE_SPELL_ID)
+    local strike = nameFor(FESTERING_STRIKE_SPELL_ID)
+    if not name or not scythe or not strike then return false end
+    local matched = name == scythe or name == strike
+    festeringIdentities[id] = matched
+    return matched
+end
+
+local function IsFesteringItem(spellID, item)
+    if IsFesteringSpell(spellID) then return true end
+    if InCombatLockdown() then return false end
+    local auraID = ReadSpellID(item.GetAuraSpellID, item)
+    if IsFesteringSpell(auraID) then return true end
+    -- A known unrelated spell wins over a reused/custom icon texture.
+    local cleanID = CleanSpellID(spellID)
+    if cleanID and festeringIdentities[cleanID] == false then return false end
+    if auraID and festeringIdentities[auraID] == false then return false end
+    if not (DKAssistDB and DKAssistDB.trackCDMFestering) then return false end
+    -- Only called for CDM items discovered by the existing viewer/Ellesmere
+    -- paths. Never enumerate the UI or stringify a potentially secret value.
+    local ok, texture = pcall(function()
+        local icon = item.Icon or item.icon or item._tex
+        if icon and type(icon.GetTexture) == "function" then return icon:GetTexture() end
+    end)
+    if not ok or (issecretvalue and issecretvalue(texture)) then return false end
+    return texture == 879926 or texture == 3997563
+        or texture == "879926" or texture == "3997563"
+end
+
 local function GetCDMSpellID(item)
     if not (item and item.GetCooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
         return nil
@@ -93,11 +149,11 @@ local function RegisterItem(item)
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
-        local spellID = GetCDMSpellID(item) or GetCDMItemSpellID(item)
+        local spellID = ReadSpellID(GetCDMSpellID, item) or ReadSpellID(GetCDMItemSpellID, item)
         if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
-            and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
+            and IsFesteringItem(spellID, item) then
             return "festering"
         elseif DKAssistDB.trackCDMSuddenDoom and (spellID == SUDDEN_DOOM_BUFF_ID or spellID == SUDDEN_DOOM_CDM_ID) then
             return "deathCoil"
@@ -148,19 +204,30 @@ end
 -- exposes a canonical, cached spell ID helper.  Using it avoids reading
 -- protected icon/texture values and works for its customised CDM layout.
 local function RegisterEllesmereItem(item, euiCDM)
-    if not euiCDM or not euiCDM.GetCanonicalSpellIDForFrame then return end
+    if not euiCDM or not DKAssistDB or InCombatLockdown() then return end
     local ok, kind = pcall(function()
         -- Ellesmere stores the resolved spell on its external frame data.
         -- Prefer that clean cached value; an active Blizzard CDM item can
         -- return a secret value from GetSpellID() during combat.
         local frameData = euiCDM._hookFrameData and euiCDM._hookFrameData[item]
-        local spellID = frameData and frameData.spellID
-            or euiCDM.GetCanonicalSpellIDForFrame(item)
-            or item.spellID or item.overrideSpellID
+        -- Current Ellesmere stores routing identity in _ecmeFC. Its custom
+        -- spell frames have no Blizzard GetSpellID/cooldownInfo at all.
+        local frameCache = euiCDM._ecmeFC and euiCDM._ecmeFC[item]
+        -- Displayed identity wins over a stale/base routing cache. A failing
+        -- optional helper must not discard all the remaining clean sources.
+        local spellID = ReadSpellID(euiCDM.GetCanonicalSpellIDForFrame, item)
+            or ReadSpellID(item.GetSpellID, item)
+            or (frameCache and CleanSpellID(frameCache.spellID))
+            or CleanSpellID(item._phSpellID)
+            or (frameData and CleanSpellID(frameData.spellID))
+            or CleanSpellID(item.overrideSpellID) or CleanSpellID(item.spellID)
+            or ReadSpellID(GetCDMSpellID, item)
+        if spellID and not IsFesteringItem(spellID, item)
+            and addon.ClearCDMFesteringFrame then addon:ClearCDMFesteringFrame(item) end
         if addon:IsUnholySpec() and DKAssistDB.trackCDMPutrefy and spellID == PUTREFY_SPELL_ID then
             return "putrefy"
         elseif DKAssistDB.trackCDMFestering
-            and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
+            and IsFesteringItem(spellID, item) then
             return "festering"
         elseif DKAssistDB.trackCDMSuddenDoom and (spellID == SUDDEN_DOOM_BUFF_ID or spellID == SUDDEN_DOOM_CDM_ID) then
             return "deathCoil"
@@ -219,16 +286,35 @@ end
 -- The CDM may already have built its item pool before our hook is installed.
 -- Register those current items directly, then the RefreshData hook handles
 -- every later layout, talent, and cooldown update.
-local function RegisterExistingItems()
+local RegisterExistingItems
+local refreshQueued = false
+local function QueueCDMRefresh()
+    if InCombatLockdown() or refreshQueued then return end
+    refreshQueued = true
+    C_Timer.After(0.3, function()
+        refreshQueued = false
+        if not InCombatLockdown() then RegisterExistingItems() end
+    end)
+end
+local hookedEllesmere = setmetatable({}, { __mode = "k" })
+local hookedViewers = setmetatable({}, { __mode = "k" })
+RegisterExistingItems = function()
     if InCombatLockdown() then return end
     local euiCDM = EllesmereUI and EllesmereUI._ModuleNS
         and EllesmereUI._ModuleNS["EllesmereUICooldownManager"]
-    local viewers = {
-        EssentialCooldownViewer,
-        UtilityCooldownViewer,
-        BuffIconCooldownViewer,
-        BuffBarCooldownViewer,
-    }
+    local viewers = { "EssentialCooldownViewer", "UtilityCooldownViewer",
+        "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+
+    if euiCDM then
+        local hooks = hookedEllesmere[euiCDM] or {}
+        hookedEllesmere[euiCDM] = hooks
+        for _, name in ipairs({ "QueueReanchor", "CollectAndReanchor" }) do
+            if not hooks[name] and type(euiCDM[name]) == "function" then
+                hooksecurefunc(euiCDM, name, QueueCDMRefresh)
+                hooks[name] = true
+            end
+        end
+    end
 
     -- EllesmereUI can re-anchor CDM icons into its own visible bars. Those
     -- icons are the correct frames to decorate, not necessarily the hidden
@@ -241,7 +327,12 @@ local function RegisterExistingItems()
         end
     end
 
-    for _, viewer in ipairs(viewers) do
+    for _, name in ipairs(viewers) do
+        local viewer = _G[name]
+        if euiCDM and viewer and not hookedViewers[viewer] and type(viewer.RefreshLayout) == "function" then
+            hooksecurefunc(viewer, "RefreshLayout", QueueCDMRefresh)
+            hookedViewers[viewer] = true
+        end
         -- EllesmereUI (and current Blizzard CDM) keeps active items in this
         -- pool rather than exposing GetItemFrames().
         if viewer and viewer.itemFramePool and viewer.itemFramePool.EnumerateActive then

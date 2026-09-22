@@ -33,6 +33,24 @@ local function IsHidingBarLoaded()
     return IsAddOnLoaded and IsAddOnLoaded("HidingBar")
 end
 
+local function HasGroupedLauncher()
+    if not IsHidingBarLoaded() then return false end
+    local launcher = _G.ADDON_HidingBar_DKAssist
+    return launcher and launcher:IsShown() or false
+end
+
+local function HandOffMinimapButton(button)
+    local hb = _G.HidingBarAddon
+    if InCombatLockdown() or not IsHidingBarLoaded() or not hb
+        or not hb.defaultBar or not hb.pConfig or type(hb.ldbi_add) ~= "function" then return end
+    for _, existing in ipairs(hb.minimapButtons or {}) do
+        if existing == button then return end
+    end
+    -- Use HidingBar's existing collector path; it respects ignored buttons
+    -- and saved bar assignments. Never force or change its configuration.
+    hb:ldbi_add(nil, button, "DKAssist")
+end
+
 function DKAssist_AddonCompartmentClick()
     OpenSettings()
 end
@@ -49,6 +67,9 @@ function DKAssist_AddonCompartmentLeave()
 end
 
 local function UpdatePosition(button)
+    -- A collector owns placement once it has adopted the button.
+    if button:GetParent() ~= Minimap then return end
+    if _G._EBS_AddonVisible and _G._EBS_AddonVisible[button] ~= nil then return end
     -- Match the normal minimap-button behaviour: sit on the ring and scale
     -- correctly with custom minimap sizes (such as EllesmereUI/HCAA layouts).
     local angle = DKAssistDB.minimapAngle or 225
@@ -60,6 +81,12 @@ end
 
 function addon:CreateMinimapButton()
     RegisterDataBrokerLauncher()
+    -- HidingBar already creates a launcher from our DataBroker object. Do
+    -- not also create/show a second, independent minimap button.
+    if self.ldbLauncher and HasGroupedLauncher() then
+        if self.minimapButton then self.minimapButton:Hide() end
+        return
+    end
     if not DKAssistDB.minimapStyleVersion then
         DKAssistDB.minimapAngle = 225
         DKAssistDB.minimapStyleVersion = 1
@@ -67,6 +94,7 @@ function addon:CreateMinimapButton()
     if self.minimapButton then
         UpdatePosition(self.minimapButton)
         if DKAssistDB.minimapHidden then self.minimapButton:Hide() else self.minimapButton:Show() end
+        if not DKAssistDB.minimapHidden then HandOffMinimapButton(self.minimapButton) end
         return
     end
 
@@ -118,9 +146,12 @@ function addon:CreateMinimapButton()
     self.minimapButton = button
     UpdatePosition(button)
     if DKAssistDB.minimapHidden then button:Hide() else button:Show() end
+    if not DKAssistDB.minimapHidden then HandOffMinimapButton(button) end
     -- EllesmereUI finishes its minimap-button layout shortly after login.
     -- Reapply the preferred below-minimap point once that layout has settled.
     C_Timer.After(2, function()
+        if HasGroupedLauncher() then button:Hide(); return end
+        if not DKAssistDB.minimapHidden then HandOffMinimapButton(button) end
         if button:GetParent() == Minimap then UpdatePosition(button) end
     end)
 end
@@ -137,7 +168,9 @@ end
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-initFrame:SetScript("OnEvent", function()
+initFrame:RegisterEvent("ADDON_LOADED")
+initFrame:SetScript("OnEvent", function(_, event, loadedAddon)
+    if event == "ADDON_LOADED" and loadedAddon ~= "HidingBar" then return end
     C_Timer.After(0, function()
         if DKAssistDB and Minimap then addon:CreateMinimapButton() end
     end)

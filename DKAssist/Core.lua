@@ -862,9 +862,8 @@ function addon:CreateFesteringOverlays()
     end
     wipe(festeringOverlays)
 
-    -- Use one target at a time.  When the Cooldown Manager option is on,
-    -- Festering is intentionally tracked there instead of on action bars.
-    if DKAssistDB.trackCDMFestering then return end
+    -- Keep the legacy CDM-only choice unless the player opts into both.
+    if DKAssistDB.trackCDMFestering and not DKAssistDB.festeringGlowBoth then return end
 
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "festeringScythe" then
@@ -1221,6 +1220,19 @@ function addon:RegisterCDMFesteringFrame(frame)
     addon:RefreshFesteringGlows()
 end
 
+function addon:ClearCDMFesteringFrame(frame)
+    local overlay = cdmFesteringOverlays[frame]
+    if not overlay then return end
+    StopFesteringBorder(overlay)
+    if overlay._glowActive then
+        local gt = self:GetGlowTypeByID(DKAssistDB.spells.festeringScythe.glowType)
+        if gt and gt.stop then pcall(gt.stop, overlay) end
+    end
+    overlay:Hide()
+    overlay:SetParent(nil)
+    cdmFesteringOverlays[frame] = nil
+end
+
 function addon:CreatePutrefyOverlays()
     for _, overlay in pairs(putrefyOverlays) do
         addon:_StopPutrefyOverlay(overlay)
@@ -1545,7 +1557,8 @@ local function ShowFesteringGlow()
 
     if DKAssistDB.trackCDMFestering then
         for _, overlay in pairs(cdmFesteringOverlays) do applyGlow(overlay) end
-    else
+    end
+    if not DKAssistDB.trackCDMFestering or DKAssistDB.festeringGlowBoth then
         for _, overlay in pairs(festeringOverlays) do applyGlow(overlay) end
     end
     return applied
@@ -1702,6 +1715,22 @@ function addon:RefreshFesteringGlows()
     end
 end
 
+function addon:GetFesteringGlowTarget()
+    if not DKAssistDB.trackCDMFestering then return "bars" end
+    return DKAssistDB.festeringGlowBoth and "both" or "cdm"
+end
+
+function addon:SetFesteringGlowTarget(target)
+    if target ~= "bars" and target ~= "cdm" and target ~= "both" then return end
+    local wasActive = festeringGlowActive
+    HideFesteringGlow()
+    DKAssistDB.trackCDMFestering = target ~= "bars"
+    DKAssistDB.festeringGlowBoth = target == "both"
+    self:CreateFesteringOverlays()
+    if self.RefreshCDMTrackedItems then self:RefreshCDMTrackedItems() end
+    if wasActive then ShowFesteringGlow() end
+end
+
 local putrefyWarningTimer  = nil
 local putrefyDurationTimer = nil
 putrefyWarningActive = false
@@ -1848,9 +1877,11 @@ function addon:RefreshPutrefyWarnings()
 end
 
 function addon:TestFesteringGlow()
+    if not InCombatLockdown() and self.RefreshCDMTrackedItems then self:RefreshCDMTrackedItems() end
     local count = ShowFesteringGlow()
     if count == 0 then
-        local target = DKAssistDB.trackCDMFestering and "Cooldown Manager" or "action bars"
+        local target = addon:GetFesteringGlowTarget() == "both" and "action bars or Cooldown Manager"
+            or (DKAssistDB.trackCDMFestering and "Cooldown Manager" or "action bars")
         print("|cffcc0000DK Assist:|r No visible Festering Scythe button found on " .. target .. ". Reload UI, then use Rescan Bars.")
     else
         print("|cffcc0000DK Assist:|r Festering Scythe test glow applied to " .. count .. " button(s).")

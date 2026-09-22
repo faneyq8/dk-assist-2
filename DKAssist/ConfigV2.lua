@@ -240,6 +240,7 @@ local function AttachModernDropdown(dd, parent, width, itemsProvider, currentPro
         menu:Hide()
         modern.arrow:SetText("v")
     end
+    modern:SetScript("OnHide", CloseMenu)
 
     local function RefreshRows()
         local items = itemsProvider()
@@ -339,8 +340,8 @@ local function AttachModernDropdown(dd, parent, width, itemsProvider, currentPro
             menu:SetBackdropColor(palette.control[1] * 0.72, palette.control[2] * 0.72, palette.control[3] * 0.72, 0.99)
             menu:SetBackdropBorderColor(palette.border[1], palette.border[2], palette.border[3], 1)
         end
-        dd:SetShown(not enabled)
-        modern:SetShown(enabled)
+        modern.enabled = enabled
+        dd:SetControlShown(dd.dkassistControlShown)
         if enabled then modern.refresh() end
     end
     dd.dkassistModern = modern
@@ -350,6 +351,21 @@ end
 local function CreateDropdown(parent, x, y, width, itemsProvider, currentProvider, setter)
     dropdownSerial = dropdownSerial + 1
     local dd = CreateFrame("Frame", "DKAssistV2Dropdown" .. dropdownSerial, parent, "UIDropDownMenuTemplate")
+    -- Page visibility and theme selection are independent. Always update both
+    -- renderers together so page refreshes cannot revive the Classic control.
+    dd.dkassistControlShown = true
+    function dd:SetControlShown(shown)
+        self.dkassistControlShown = not not shown
+        local modern = self.dkassistModern
+        local visible = self.dkassistControlShown and not (modern and modern.dkassistNavigationHidden)
+        self:SetShown(visible and not (modern and modern.enabled))
+        if modern then
+            modern:SetShown(visible and modern.enabled or false)
+            if not visible and modern.menu then modern.menu:Hide() end
+        end
+        if self.controlLabel then self.controlLabel:SetShown(visible) end
+        if self.visibilityOwner then self.visibilityOwner:SetShown(visible) end
+    end
     dd:SetPoint("TOPLEFT", parent, "TOPLEFT", x, AdjustedY(parent, y))
     UIDropDownMenu_SetWidth(dd, width)
     local function Init()
@@ -380,6 +396,9 @@ local function CreateDropdown(parent, x, y, width, itemsProvider, currentProvide
         UIDropDownMenu_SetText(dd, label or "")
         UIDropDownMenu_SetSelectedValue(dd, current)
         if dd.dkassistModern then dd.dkassistModern.refresh() end
+        -- Native dropdown initialization can change visibility. Reapply the
+        -- selected renderer after refreshing its text and menu state.
+        dd:SetControlShown(dd.dkassistControlShown)
     end
     AttachModernDropdown(dd, parent, width, itemsProvider, currentProvider, setter)
     return dd
@@ -686,6 +705,28 @@ function addon:CreateConfigPanel(standalone)
     cdmCheck:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -310, 43)
     cdmCheck.Text:SetFontObject("GameFontHighlightSmall")
 
+    -- Keep both renderers and their label under one page-specific owner.
+    -- Hiding the owner prevents a themed sibling leaking into other pages.
+    local festeringTargetOwner = CreateFrame("Frame", nil, panel)
+    festeringTargetOwner:SetSize(300, 32)
+    festeringTargetOwner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -310, 38)
+    local festeringTarget = CreateDropdown(festeringTargetOwner, 0, 0, 180,
+        function() return {
+            { text = "Action Bars", value = "bars" },
+            { text = "Cooldown Manager", value = "cdm" },
+            { text = "Both", value = "both" },
+        } end,
+        function() return addon:GetFesteringGlowTarget() end,
+        function(value) addon:SetFesteringGlowTarget(value) end)
+    festeringTarget:ClearAllPoints()
+    festeringTarget:SetPoint("BOTTOMRIGHT", festeringTargetOwner, "BOTTOMRIGHT", 0, 0)
+    festeringTarget.visibilityOwner = festeringTargetOwner
+    local festeringTargetLabel = CreateText(festeringTargetOwner, "Glow Target:", 0, 0, "GameFontHighlightSmall")
+    festeringTarget.controlLabel = festeringTargetLabel
+    festeringTargetLabel:ClearAllPoints()
+    festeringTargetLabel:SetPoint("RIGHT", festeringTarget, "LEFT", 8, 2)
+    festeringTarget:SetControlShown(false)
+
     local function StopPreview(page)
         if not page then return end
         for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
@@ -789,7 +830,7 @@ function addon:CreateConfigPanel(standalone)
         page.selectorLabel = selectorLabel
         if standalone then
             selectorLabel:Hide()
-            selector:Hide()
+            selector:SetControlShown(false)
             -- The selector occupied the first row in the old Settings layout.
             -- Standalone navigation replaces it, so subsequent controls should
             -- use that space instead of retaining an empty 38-pixel band.
@@ -994,7 +1035,8 @@ function addon:CreateConfigPanel(standalone)
                 for _, card in ipairs(page.textCards) do if card then card:SetShown(mode == "text") end end
                 page.glowTab:SetEnabled(mode ~= "glow")
                 page.textTab:SetEnabled(mode ~= "text")
-                cdmCheck:SetShown((mode == "glow") and (key == "festering" or key == "deathcoil" or key == "epidemic"))
+                cdmCheck:SetShown((mode == "glow") and (key == "deathcoil" or key == "epidemic"))
+                festeringTarget:SetControlShown(mode == "glow" and key == "festering")
             end
             page.glowTab:SetScript("OnClick", function() page.SetMode("glow") end)
         end
@@ -1665,7 +1707,7 @@ function addon:CreateConfigPanel(standalone)
         if key == "killingmachine" or key == "rime" then
             settings().timelineEnabled = false
             page.timeline:Hide(); page.iconMode:Hide(); page.timelineInfo:Hide()
-            orientationLabel:Hide(); page.orientation:Hide(); page.timelineScale:Hide(); page.timelineLock:Hide()
+            orientationLabel:Hide(); page.orientation:SetControlShown(false); page.timelineScale:Hide(); page.timelineLock:Hide()
             if page.orientation.dkassistModern then page.orientation.dkassistModern:Hide() end
             page.iconSize:ClearAllPoints(); page.iconSize:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 14, firstY - 112)
             page.fontSize:ClearAllPoints(); page.fontSize:SetPoint("TOPLEFT", page.settingsCard, "TOPLEFT", 14, firstY - 164)
@@ -1740,7 +1782,7 @@ function addon:CreateConfigPanel(standalone)
             if not procOnly then page.orientation.refresh(); page.timelineScale.refresh(); page.timelineLock.refresh() end
             page.iconSize.refresh(); page.fontSize.refresh(); page.iconLock.refresh()
             if procOnly then
-                page.orientation:Hide()
+                page.orientation:SetControlShown(false)
                 if page.orientation.dkassistModern then page.orientation.dkassistModern:Hide() end
                 page.procGlowStyle.refresh(); page.procGlowColor.refresh(); page.procGlowSpeed.refresh(); page.procGlowOpacity.refresh()
                 page.procGlowLines.refresh(); page.procGlowThickness.refresh()
@@ -2350,7 +2392,9 @@ function addon:CreateConfigPanel(standalone)
         activePage:Show()
         for _, page in pairs(pages) do if page ~= activePage then page:Hide() end end
         testActive = false; testButton:SetText("Test")
-        cdmCheck:SetShown(pageKey == "festering" or pageKey == "putrefy" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
+        cdmCheck:SetShown(pageKey == "putrefy" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
+        festeringTarget:SetControlShown(key == "festering")
+        festeringTarget.refresh()
         cdmCheck.Text:SetText(key == "putrefy" and "Track on Cooldown Manager" or "Use Cooldown Manager (instead of action bars)")
         rescanButton:SetShown(key ~= "dnd" and key ~= "blightfall" and key ~= "soulreaper" and key ~= "gargoyle" and key ~= "darktransformation" and key ~= "pillaroffrost" and key ~= "breath")
         testButton:SetShown(key ~= "soulreaper")
