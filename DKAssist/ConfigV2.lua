@@ -1982,6 +1982,15 @@ function addon:CreateConfigPanel(standalone)
         page.showDuration = CreateCheck(page.settingsCard, "Show duration", 205, -112,
             function() return settings().showDuration ~= false end,
             function(v) settings().showDuration = v; changed() end)
+        page.showTimerText = CreateCheck(page.settingsCard, "Show timer beside bar", 14, -140,
+            function() return settings().showTimerText ~= false end,
+            function(v) settings().showTimerText = v; changed() end)
+        page.alwaysShow = CreateCheck(page.settingsCard, "Always Show", 205, -372,
+            function() return settings().alwaysShow == true end,
+            function(v) settings().alwaysShow = v; changed() end)
+        page.estimateDuration = CreateCheck(page.settingsCard, "Allow estimated timer", 14, -346,
+            function() return settings().estimateDuration == true end,
+            function(v) settings().estimateDuration = v; changed() end)
         page.width = CreateSlider(page.settingsCard, "Bar Width", 14, -166, 190, 120, 420, 5,
             function() return settings().width or 260 end,
             function(v) settings().width = v; changed() end)
@@ -2011,10 +2020,11 @@ function addon:CreateConfigPanel(standalone)
         page.previewText:SetPoint("TOP", page.previewIcon, "BOTTOM", 0, -10)
         page.previewText:SetJustifyH("CENTER")
         page.help = CreateText(page.infoCard,
-            "The main bar shows current absorb strength. The thin yellow bar uses Blood Shield's real aura duration when available and falls back to a 10-second timer refreshed by each successful Death Strike.",
+            "Main bar: total absorbs from all shields, relative to maximum health. Yellow bar and numbers: Blood Shield duration. For combat timing, add Blood Shield to Cooldown Manager's Tracked Buffs or Tracked Bars before combat. If no duration is available, the timer hides. Damage may consume the shield sooner. Optional estimated mode counts 10 seconds after Death Strike, marked Est.; it does not confirm a remaining shield.",
             18, -45, "GameFontHighlightSmall", 330, { 0.70, 0.70, 0.70 })
         page.refresh = function()
             page.selector.refresh(); page.enable.refresh(); page.showIcon.refresh(); page.showDuration.refresh()
+            page.showTimerText.refresh(); page.estimateDuration.refresh(); page.alwaysShow.refresh()
             page.width.refresh(); page.height.refresh(); page.iconSize.refresh(); page.color.refresh(); page.lock.refresh()
         end
         pages.bloodshield = page

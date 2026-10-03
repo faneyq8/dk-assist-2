@@ -142,6 +142,7 @@ local function BreathTrackerEnabled()
 end
 
 local function RegisterItem(item)
+    if addon.RegisterBloodShieldCDMFrame then addon:RegisterBloodShieldCDMFrame(item) end
     if not DKAssistDB or (not DKAssistDB.trackCDMPutrefy and not DKAssistDB.trackCDMFestering
         and not DKAssistDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not AnyBloodDnDEnabled()
         and not BloodBoneEnabled() and not FrostProcCDMEnabled("killingMachine")

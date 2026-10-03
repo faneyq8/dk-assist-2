@@ -320,8 +320,11 @@ addon.DEFAULT_DB = {
     },
     bloodShield = {
         enabled = false,
+        alwaysShow = false,
         showIcon = true,
         showDuration = true,
+        showTimerText = true,
+        estimateDuration = false,
         width = 260,
         height = 36,
         iconSize = 52,
